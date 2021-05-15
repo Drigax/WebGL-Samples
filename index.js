@@ -13,8 +13,8 @@ function main() {
     }
 
     // Get rendering context
-    const gl = canvas.getContext("webgl2");
-    if (!gl) {
+    const glContext = canvas.getContext("webgl2");
+    if (!glContext) {
         console.error("Unable to retreive webGL2 rendering context! exiting...");
         return;
     }
@@ -24,17 +24,40 @@ function main() {
         console.warn("Unable to find FPS counter element.");
     }
 
-    let fps = 60;
+    let lastFrameTime = window.performance.now();
+    let currentFrameTime = 0;
+    let fps = 0;
+
+    // Simple lambda that will update our FPS ticker.
+    const updateFps = () => {
+        lastFrameTime = currentFrameTime;
+        currentFrameTime = window.performance.now();
+        const diff = currentFrameTime - lastFrameTime;
+        fps = 1/(diff/1000);
+        fpsTextField.textContent = fps + " FPS";
+    }
 
     console.log("ShadowMapping - main()!");
+
     // Set clear color to black.
-    gl.clearColor(0.0, 0.0, 0.0, 1.0);
+    glContext.clearColor(0.0, 0.0, 0.0, 1.0);
 
     console.log("clearing scene...");
-    gl.clear(gl.COLOR_BUFFER_BIT);
+    glContext.clear(glContext.COLOR_BUFFER_BIT);
 
+    let experience = new ShadowMappingExperience(glContext);
 
-    fpsTextField.textContent = fps + " FPS";
+    while(true){
+        updateFps();
+        experience.update();
+        render(glContext);
+    }
+}
+
+function render(glContext) {
+    // Set clear color to black.
+    glContext.clearColor(0.0, 0.0, 0.0, 1.0);
+    glContext.clear(glContext.COLOR_BUFFER_BIT);
 }
 
 window.onload = main;
