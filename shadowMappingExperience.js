@@ -7,4 +7,8 @@ class ShadowMappingExperience{
     update() {
 
     }
+
+    render() {
+
+    }
 }

@@ -27,14 +27,23 @@ function main() {
     let lastFrameTime = window.performance.now();
     let currentFrameTime = 0;
     let fps = 0;
+    let frameCount = 0;
+    let fpsUpdateFrameCount = 60;
 
-    // Simple lambda that will update our FPS ticker.
+    // Simple lambda that will update our FPS ticker, and tell our render loop how long to wait until rendering the next frame.
+    // returns milisecond difference since previous frame.
     const updateFps = () => {
+        frameCount++;
+        const diff = currentFrameTime - lastFrameTime;
         lastFrameTime = currentFrameTime;
         currentFrameTime = window.performance.now();
-        const diff = currentFrameTime - lastFrameTime;
-        fps = 1/(diff/1000);
-        fpsTextField.textContent = fps + " FPS";
+        if (frameCount >= fpsUpdateFrameCount){
+            console.log("difference between frames: " + diff);
+            fps = 1/(diff/1000);
+            fpsTextField.textContent = parseFloat(fps).toFixed(0) + " FPS";
+            frameCount = 0;
+        }
+        return diff;
     }
 
     console.log("ShadowMapping - main()!");
@@ -47,14 +56,20 @@ function main() {
 
     let experience = new ShadowMappingExperience(glContext);
 
-    while(true){
-        updateFps();
-        experience.update();
-        render(glContext);
+    const renderNextFrame = () => {
+        const diff = updateFps();
+        setTimeout(() => {
+            experience.update();
+            startRender(glContext);
+            experience.render();
+            renderNextFrame();
+        }, Math.max(16 - (diff/1000), 0)); //Limit to ~60 FPS
     }
+
+    renderNextFrame();
 }
 
-function render(glContext) {
+function startRender(glContext) {
     // Set clear color to black.
     glContext.clearColor(0.0, 0.0, 0.0, 1.0);
     glContext.clear(glContext.COLOR_BUFFER_BIT);
