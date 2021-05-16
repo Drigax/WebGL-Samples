@@ -63,7 +63,7 @@ function main() {
             startRender(glContext);
             experience.render();
             renderNextFrame();
-        }, Math.max(16 - (diff/1000), 0)); //Limit to ~60 FPS
+        }, Math.max(16.0 - (diff/1000.0), 0.0)); //Limit to ~60 FPS
     }
 
     renderNextFrame();
