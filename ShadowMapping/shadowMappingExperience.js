@@ -5,6 +5,7 @@ class ShadowMappingExperience{
 
         this.camera = new Camera();
         this.camera.setPosition(0, 5, -10);
+        this.meshes.add(new BoxMesh
     }
 
     update() {
@@ -62,6 +63,13 @@ class Mesh extends Object {
 
     render() {
 
+    }
+}
+
+class Box extends Mesh {
+    constructor(){
+        super();
+        this.vertices = [-0.5, -0.5, -0.5,  ] // finish defining box geometry.
     }
 }
 
