@@ -1,7 +1,7 @@
 class Experience {
     constructor(glContext){
         this.gl = glContext;
-        this.clearColor = [];
+        this.clearColor = vec4.fromValues(0.0, 0.0, 0.0, 1.0);
         this.meshes = [];
         this.materials = [];
         this.lights = [];
@@ -13,16 +13,16 @@ class Experience {
     }
 
     render() {
-        this.gl.clearColor(this.clearColor[0], this.clearColor[1], this.clearColor[2]. this.clearColor[3]);
+        this.gl.clearColor(this.clearColor[0], this.clearColor[1], this.clearColor[2], this.clearColor[3]);
         this.gl.clearDepth(1.0);
         this.gl.enable(this.gl.DEPTH_TEST);
         this.gl.depthFunc(this.gl.LEQUAL);
 
         // clear the depth and color buffers.
-        this.gl.clear(gl.COLOR_BUFFER_BIT | this.gl.DEPTH_BUFFER_BIT);
+        this.gl.clear(this.gl.COLOR_BUFFER_BIT | this.gl.DEPTH_BUFFER_BIT);
 
         this.meshes.forEach(mesh => {
-            const material = mesh.material | new FlatShadedMaterial(this.gl, [0.5, 0.5, 0.5, 1.0]);
+            const material = mesh.material | new FlatShadedMaterial(this.gl, vec4.fromValues(0.5, 0.5, 0.5, 1.0));
             mesh.material.render();
             mesh.render();
         });
@@ -42,8 +42,8 @@ class GlHelper {
      * @returns {}
      */
     static createShaderProgram(gl, vertexShaderSource, fragmentShaderSource) {
-        const vertexShader = glHelper.compileShader(gl, gl.VERTEX_SHADER, vertexShaderSource);
-        const fragmentShader = glHelper.compileShader(gl, gl.FRAGMENT_SHADER, fragmentShaderSource);
+        const vertexShader = GlHelper.compileShader(gl, gl.VERTEX_SHADER, vertexShaderSource);
+        const fragmentShader = GlHelper.compileShader(gl, gl.FRAGMENT_SHADER, fragmentShaderSource);
 
         const shaderProgram = gl.createProgram();
         gl.attachShader(shaderProgram, vertexShader);
@@ -101,12 +101,12 @@ class ShadowMappingExperience extends Experience {
         this.camera = new Camera();
         this.camera.setPosition(0, 5, -10);
 
-        const box = new BoxMesh();
-        this.meshes.add(box);
+        const box = new BoxMesh(glContext);
+        this.meshes.push(box);
         box.setPosition(0, 2, 0);
 
-        const plane = new PlaneMesh();
-        this.meshes.add(plane);
+        const plane = new PlaneMesh(glContext);
+        this.meshes.push(plane);
         plane.setPosition(0, 0, 0);
     }
 
@@ -124,28 +124,14 @@ class ShadowMappingExperience extends Experience {
 // See: https://www.tutorialspoint.com/webgl/webgl_basics.htm
 class Matrix {
     constructor() {
-        this.m[00] = 1; //m00
-        this.m[01] = 0; //m01
-        this.m[02] = 0; //m02
-        this.m[03] = 0; //m03
-        this.m[04] = 0; //m10
-        this.m[05] = 1; //m11
-        this.m[06] = 0; //m12
-        this.m[07] = 0; //m13
-        this.m[08] = 0; //m20
-        this.m[09] = 0; //m21
-        this.m[10] = 1; //m22
-        this.m[11] = 0; //m23
-        this.m[12] = 0; //m30
-        this.m[13] = 0; //m31
-        this.m[14] = 0; //m32
-        this.m[15] = 1; //m33
+        this.m = mat4.create();
     }
 }
 
 class Object3d {
-    constructor() {
+    constructor(glContext) {
         this.transform = new Matrix();
+        this.gl = glContext;
     }
 
     setPosition(x, y, z){
@@ -157,28 +143,31 @@ class Object3d {
 
 class Mesh extends Object3d {
     constructor(glContext) {
-        super();
+        super(glContext);
         this.vertices = [];
         this.indices  = [];
         this.triangleDrawMode = glContext.TRIANGLES;
-        this.material = new PhongShaderMaterial([0.5, 0.5, 0.5, 1.0],
-                                                [0.5, 0.5, 0.5, 1.0],
-                                                [1.0, 1.0, 1.0, 1.0],
+        this.material = new PhongShaderMaterial(glContext,
+                                                vec4.fromValues(0.5, 0.5, 0.5, 1.0),
+                                                vec4.fromValues(0.5, 0.5, 0.5, 1.0),
+                                                vec4.fromValues(1.0, 1.0, 1.0, 1.0),
+                                                0.3
                                                 );
     }
 
     render() {
-        const positionBuffer = gl.createBuffer();
-        gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+        const positionBuffer = this.gl.createBuffer();
+        this.gl.bindBuffer(this.gl.ARRAY_BUFFER, positionBuffer);
 
-        gl.bufferData(gl.ARRAY_BUFFER,
-                      new Float32Array(vertices),
-                      gl.STATIC_DRAW);
+        this.gl.bufferData(this.gl.ARRAY_BUFFER,
+                      new Float32Array(this.vertices),
+                      this.gl.STATIC_DRAW);
+        
         return positionBuffer;
     }
 }
 
-class Box extends Mesh {
+class BoxMesh extends Mesh {
     constructor(glContext){
         super(glContext);
         this.vertices = [-0.5,  0.5,  0.5,
@@ -227,18 +216,13 @@ class GroundPlaneMesh extends Mesh {
 }
 
 class Material {
-
-    constructor(glContext) {
-        this.gl = glContext;
-    }
-
     /**
      * Vertex shader source courtesy of MDN WebGL tutorial:
      * https://developer.mozilla.org/en-US/docs/Web/API/WebGL_API/Tutorial/Adding_2D_content_to_a_WebGL_context
      *
      */
-    static vertexShader = `
-        attribute vec4 aVertexPosition;
+    static vertexShaderSource = `
+        attribute highp vec4 aVertexPosition;
 
         uniform mat4 uModelViewMatrix;
         uniform mat4 uProjectionMatrix;
@@ -247,15 +231,37 @@ class Material {
             gl_Position = uProjectionMatrix * uModelViewMatrix * aVertexPosition;
         }
     `;
+
+    constructor(glContext) {
+        this.gl = glContext;
+    }
 }
 
 class PhongShaderMaterial extends Material {
+    /**
+     * Vertex shader source courtesy of MDN WebGL tutorial:
+     * https://developer.mozilla.org/en-US/docs/Web/API/WebGL_API/Tutorial/Adding_2D_content_to_a_WebGL_context
+     *
+     */
+    static fragmentShaderSource = `
+        uniform highp vec4 ambientColor;
+        uniform highp vec4 diffuseColor;
+        uniform highp vec4 specularColor;
+        uniform highp vec4 glossiness;
+
+        void main() {
+            gl_FragColor = ambientColor;
+        }
+    `;
+
+    static shaderProgram = null;
+
     constructor(glContext, ambientColor, diffuseColor, specularColor, glossiness) {
         super(glContext);
 
-        this.ambientColor  = ambientColor  | [0.5, 0.5, 0.5, 1.0];
-        this.diffuseColor  = diffuseColor  | [0.5, 0.5, 0.5, 1.0];
-        this.specularColor = specularColor | [1.0, 1.0, 1.0, 1.0];
+        this.ambientColor  = ambientColor  | vec4.fromValues(0.5, 0.5, 0.5, 1.0);
+        this.diffuseColor  = diffuseColor  | vec4.fromValues(0.5, 0.5, 0.5, 1.0);
+        this.specularColor = specularColor | vec4.fromValues(1.0, 1.0, 1.0, 1.0);
         this.glossiness    = glossiness    | 0.3;
 
         if (!PhongShaderMaterial.shaderProgram){
@@ -266,37 +272,11 @@ class PhongShaderMaterial extends Material {
     render() {
 
     }
-
-    /**
-     * Vertex shader source courtesy of MDN WebGL tutorial:
-     * https://developer.mozilla.org/en-US/docs/Web/API/WebGL_API/Tutorial/Adding_2D_content_to_a_WebGL_context
-     *
-     */
-    static fragmentShader = `
-        attribute vec4 aVertexPosition;
-
-        uniform mat4 uModelViewMatrix;
-        uniform mat4 uProjectionMatrix;
-
-        void main(){
-            gl_Position = uProjectionMatrix * uModelViewMatrix * aVertexPosition;
-        }
-    `;
-
-    static shaderProgram = null;
 }
 
 class FlatShadedMaterial extends Material {
-    constructor(glContext, color) {
-        super(glContext);
-
-        if (!FlatShadedMaterial.shaderProgram){
-            FlatShadedMaterial.shaderProgram = GlHelper.createShaderProgram(glContext, Material.vertexShaderSource, FlatShadedMaterial.fragmentShaderSource);
-        }
-    }
-
-    static fragmentShader = `
-        uniform vec4 color;
+    static fragmentShaderSource = `
+        uniform highp vec4 color;
 
         void main() {
             gl_FragColor = color;
@@ -304,6 +284,14 @@ class FlatShadedMaterial extends Material {
     `;
 
     static shaderProgram = null;
+
+    constructor(glContext, color) {
+        super(glContext);
+
+        if (!FlatShadedMaterial.shaderProgram){
+            FlatShadedMaterial.shaderProgram = GlHelper.createShaderProgram(glContext, Material.vertexShaderSource, FlatShadedMaterial.fragmentShaderSource);
+        }
+    }
 }
 
 class Camera extends Object3d {
