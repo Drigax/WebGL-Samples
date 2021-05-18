@@ -1,5 +1,5 @@
 class Experience {
-    constructor(glContext){
+    constructor(glContext) {
         this.gl = glContext;
         this.clearColor = vec4.fromValues(0.0, 0.0, 0.0, 1.0);
         this.meshes = [];
@@ -93,7 +93,7 @@ class GlHelper {
 }
 
 class ShadowMappingExperience extends Experience {
-    constructor(glContext){
+    constructor(glContext) {
         super(glContext);
         this.name = "ShadowMappingExperience";
         console.log("Created" + this.name);
@@ -134,7 +134,7 @@ class Object3d {
         this.gl = glContext;
     }
 
-    setPosition(x, y, z){
+    setPosition(x, y, z) {
         this.transform.m30 = x;
         this.transform.m31 = y;
         this.transform.m32 = z;
@@ -145,14 +145,14 @@ class Mesh extends Object3d {
     constructor(glContext) {
         super(glContext);
         this.vertices = [];
-        this.indices  = [];
+        this.indices = [];
         this.triangleDrawMode = glContext.TRIANGLES;
         this.material = new PhongShaderMaterial(glContext,
-                                                vec4.fromValues(0.5, 0.5, 0.5, 1.0),
-                                                vec4.fromValues(0.5, 0.5, 0.5, 1.0),
-                                                vec4.fromValues(1.0, 1.0, 1.0, 1.0),
-                                                0.3
-                                                );
+            vec4.fromValues(0.5, 0.5, 0.5, 1.0),
+            vec4.fromValues(0.5, 0.5, 0.5, 1.0),
+            vec4.fromValues(1.0, 1.0, 1.0, 1.0),
+            0.3
+        );
     }
 
     render() {
@@ -160,28 +160,28 @@ class Mesh extends Object3d {
         this.gl.bindBuffer(this.gl.ARRAY_BUFFER, positionBuffer);
 
         this.gl.bufferData(this.gl.ARRAY_BUFFER,
-                      new Float32Array(this.vertices),
-                      this.gl.STATIC_DRAW);
-        
+            new Float32Array(this.vertices),
+            this.gl.STATIC_DRAW);
+
         return positionBuffer;
     }
 }
 
 class BoxMesh extends Mesh {
-    constructor(glContext){
+    constructor(glContext) {
         super(glContext);
-        this.vertices = [-0.5,  0.5,  0.5,
-                         -0.5, -0.5,  0.5,
-                          0.5,  0.5,  0.5,
-                          0.5, -0.5,  0.5,
-                          0.5,  0.5, -0.5,
-                          0.5, -0.5, -0.5,
-                         -0.5,  0.5, -0.5,
-                         -0.5, -0.5, -0.5,
-                         -0.5,  0.5,  0.5,
-                         -0.5, -0.5,  0.5
-                        ];
-        this.indices = [ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
+        this.vertices = [-0.5, 0.5, 0.5,
+        -0.5, -0.5, 0.5,
+            0.5, 0.5, 0.5,
+            0.5, -0.5, 0.5,
+            0.5, 0.5, -0.5,
+            0.5, -0.5, -0.5,
+        -0.5, 0.5, -0.5,
+        -0.5, -0.5, -0.5,
+        -0.5, 0.5, 0.5,
+        -0.5, -0.5, 0.5
+        ];
+        this.indices = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
         this.triangleDrawMode = glContext.TRIANGLE_STRIP;
     }
 }
@@ -189,12 +189,12 @@ class BoxMesh extends Mesh {
 class PlaneMesh extends Mesh {
     constructor(glContext) {
         super(glContext);
-        this.vertices = [ 0.5,  0.5, 0.0,
-                         -0.5,  0.5, 0.0,
-                          0.5, -0.5, 0.0,
-                         -0.5, -0.5, 0.0
-                        ];
-        this.indices  = [0, 1, 2, 3];
+        this.vertices = [0.5, 0.5, 0.0,
+            -0.5, 0.5, 0.0,
+            0.5, -0.5, 0.0,
+            -0.5, -0.5, 0.0
+        ];
+        this.indices = [0, 1, 2, 3];
         this.triangleDrawMode = glContext.TRIANGLE_STRIP;
     }
 }
@@ -205,12 +205,12 @@ class PlaneMesh extends Mesh {
 class GroundPlaneMesh extends Mesh {
     constructor(glContext) {
         super(glContext);
-        this.vertices = [ -0.5,  0.0,  0.5,
-                           0.5,  0.0,  0.5,
-                          -0.5,  0.0, -0.5,
-                           0.5,  0.0, -0.5
-                        ];
-        this.indices  = [0, 1, 2, 3];
+        this.vertices = [-0.5, 0.0, 0.5,
+            0.5, 0.0, 0.5,
+        -0.5, 0.0, -0.5,
+            0.5, 0.0, -0.5
+        ];
+        this.indices = [0, 1, 2, 3];
         this.triangleDrawMode = glContext.TRIANGLE_STRIP;
     }
 }
@@ -227,7 +227,7 @@ class Material {
         uniform mat4 uModelViewMatrix;
         uniform mat4 uProjectionMatrix;
 
-        void main(){
+        void main() {
             gl_Position = uProjectionMatrix * uModelViewMatrix * aVertexPosition;
         }
     `;
@@ -259,12 +259,12 @@ class PhongShaderMaterial extends Material {
     constructor(glContext, ambientColor, diffuseColor, specularColor, glossiness) {
         super(glContext);
 
-        this.ambientColor  = ambientColor  | vec4.fromValues(0.5, 0.5, 0.5, 1.0);
-        this.diffuseColor  = diffuseColor  | vec4.fromValues(0.5, 0.5, 0.5, 1.0);
+        this.ambientColor = ambientColor | vec4.fromValues(0.5, 0.5, 0.5, 1.0);
+        this.diffuseColor = diffuseColor | vec4.fromValues(0.5, 0.5, 0.5, 1.0);
         this.specularColor = specularColor | vec4.fromValues(1.0, 1.0, 1.0, 1.0);
-        this.glossiness    = glossiness    | 0.3;
+        this.glossiness = glossiness | 0.3;
 
-        if (!PhongShaderMaterial.shaderProgram){
+        if (!PhongShaderMaterial.shaderProgram) {
             PhongShaderMaterial.shaderProgram = GlHelper.createShaderProgram(glContext, Material.vertexShaderSource, PhongShaderMaterial.fragmentShaderSource);
         }
     }
@@ -288,7 +288,7 @@ class FlatShadedMaterial extends Material {
     constructor(glContext, color) {
         super(glContext);
 
-        if (!FlatShadedMaterial.shaderProgram){
+        if (!FlatShadedMaterial.shaderProgram) {
             FlatShadedMaterial.shaderProgram = GlHelper.createShaderProgram(glContext, Material.vertexShaderSource, FlatShadedMaterial.fragmentShaderSource);
         }
     }
