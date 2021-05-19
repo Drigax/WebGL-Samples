@@ -21,10 +21,46 @@ class Experience {
         // clear the depth and color buffers.
         this.gl.clear(this.gl.COLOR_BUFFER_BIT | this.gl.DEPTH_BUFFER_BIT);
 
+        // calculate projection matrix for the main camera.
+        const fieldOfView = this.camera.fov * Math.PI / 180;   // in radians
+        const aspect = this.gl.canvas.clientWidth / this.gl.canvas.clientHeight;
+        const projectionMatrix = mat4.create();
+
+        mat4.perspective(projectionMatrix,
+            fieldOfView,
+            aspect,
+            this.camera.nearClippingPlane,
+            this.camera.farClippingPlane);
+
         this.meshes.forEach(mesh => {
-            const material = mesh.material | new FlatShadedMaterial(this.gl, vec4.fromValues(0.5, 0.5, 0.5, 1.0));
-            mesh.material.render();
-            mesh.render();
+            const modelViewMatrix = mat4.create();
+            mat4.translate(modelViewMatrix,
+                           modelViewMatrix,
+                           [-0.0, 0.0, -6.0]);
+
+            const numComponents = 3;
+            const type = this.gl.FLOAT;
+            const normalize = false;
+            const stride = 0;
+            const offset = 0;
+
+            const material = mesh.material ?? new FlatShadedMaterial(this.gl, vec4.fromValues(0.5, 0.5, 0.5, 1.0));
+            const programInfo = material.loadProgram();
+
+            // Set projection matrix and model view matrices
+            this.gl.uniformMatrix4fv(
+                programInfo.uniformLocations.projectionMatrix,
+                false,
+                projectionMatrix
+            );
+
+            this.gl.uniformMatrix4fv(
+                programInfo.uniformLocations.modelViewMatrix,
+                false,
+                modelViewMatrix
+            );
+
+            const attributeBuffers = mesh.render(programInfo);
         });
     }
 }
@@ -104,6 +140,11 @@ class ShadowMappingExperience extends Experience {
         const box = new BoxMesh(glContext);
         this.meshes.push(box);
         box.setPosition(0, 2, 0);
+        box.material = new PhongShaderMaterial(glContext,
+            [0.5, 0.0, 0.0, 1.0],
+            [0.5, 0.0, 0.0, 1.0],
+            [0.5, 0.5, 0.5, 1.0],
+            0.3);
 
         const plane = new PlaneMesh(glContext);
         this.meshes.push(plane);
@@ -119,25 +160,16 @@ class ShadowMappingExperience extends Experience {
     }
 }
 
-// Defines a 4x4 transformation matrix.
-// Axes used here are left handed, +Y up, +X right, -Z forward in alignment with WebGL spec.
-// See: https://www.tutorialspoint.com/webgl/webgl_basics.htm
-class Matrix {
-    constructor() {
-        this.m = mat4.create();
-    }
-}
-
 class Object3d {
     constructor(glContext) {
-        this.transform = new Matrix();
+        this.transform = mat4.create();
         this.gl = glContext;
     }
 
     setPosition(x, y, z) {
-        this.transform.m30 = x;
-        this.transform.m31 = y;
-        this.transform.m32 = z;
+        this.transform[12] = x; // m30
+        this.transform[13] = y; // m31
+        this.transform[14] = z; // m32
     }
 }
 
@@ -155,7 +187,7 @@ class Mesh extends Object3d {
         );
     }
 
-    render() {
+    render(programInfo) {
         const positionBuffer = this.gl.createBuffer();
         this.gl.bindBuffer(this.gl.ARRAY_BUFFER, positionBuffer);
 
@@ -163,19 +195,39 @@ class Mesh extends Object3d {
             new Float32Array(this.vertices),
             this.gl.STATIC_DRAW);
 
-        return positionBuffer;
+        const numComponents = 3; // 3d vertex position vector
+        const type = this.gl.FLOAT;   // for now, only support floating point vertex formats
+        const normalize = false;
+        const stride = 0;
+        const offset = 0;
+
+        this.gl.vertexAttribPointer(
+            programInfo.attribLocations.vertexPosition,
+            numComponents,
+            type,
+            normalize,
+            stride,
+            offset
+        );
+        this.gl.enableVertexAttribArray(
+            programInfo.attribLocations.vertexPosition
+        );
+
+        const vertexCount = this.vertices.length / numComponents;
+        this.gl.drawArrays(this.triangleDrawMode, offset, vertexCount);
     }
 }
 
 class BoxMesh extends Mesh {
     constructor(glContext) {
         super(glContext);
-        this.vertices = [-0.5, 0.5, 0.5,
+        this.vertices = [
+        -0.5, 0.5, 0.5,
         -0.5, -0.5, 0.5,
-            0.5, 0.5, 0.5,
-            0.5, -0.5, 0.5,
-            0.5, 0.5, -0.5,
-            0.5, -0.5, -0.5,
+        0.5, 0.5, 0.5,
+        0.5, -0.5, 0.5,
+        0.5, 0.5, -0.5,
+        0.5, -0.5, -0.5,
         -0.5, 0.5, -0.5,
         -0.5, -0.5, -0.5,
         -0.5, 0.5, 0.5,
@@ -189,7 +241,8 @@ class BoxMesh extends Mesh {
 class PlaneMesh extends Mesh {
     constructor(glContext) {
         super(glContext);
-        this.vertices = [0.5, 0.5, 0.0,
+        this.vertices = [
+            0.5, 0.5, 0.0,
             -0.5, 0.5, 0.0,
             0.5, -0.5, 0.0,
             -0.5, -0.5, 0.0
@@ -205,9 +258,10 @@ class PlaneMesh extends Mesh {
 class GroundPlaneMesh extends Mesh {
     constructor(glContext) {
         super(glContext);
-        this.vertices = [-0.5, 0.0, 0.5,
+        this.vertices = [
+            -0.5, 0.0, 0.5,
             0.5, 0.0, 0.5,
-        -0.5, 0.0, -0.5,
+            -0.5, 0.0, -0.5,
             0.5, 0.0, -0.5
         ];
         this.indices = [0, 1, 2, 3];
@@ -244,13 +298,13 @@ class PhongShaderMaterial extends Material {
      *
      */
     static fragmentShaderSource = `
-        uniform highp vec4 ambientColor;
-        uniform highp vec4 diffuseColor;
-        uniform highp vec4 specularColor;
-        uniform highp vec4 glossiness;
+        uniform highp vec4 uAmbientColor;
+        uniform highp vec4 uDiffuseColor;
+        uniform highp vec4 uSpecularColor;
+        uniform highp vec4 uGlossiness;
 
         void main() {
-            gl_FragColor = ambientColor;
+            gl_FragColor = uAmbientColor;
         }
     `;
 
@@ -259,27 +313,62 @@ class PhongShaderMaterial extends Material {
     constructor(glContext, ambientColor, diffuseColor, specularColor, glossiness) {
         super(glContext);
 
-        this.ambientColor = ambientColor | vec4.fromValues(0.5, 0.5, 0.5, 1.0);
-        this.diffuseColor = diffuseColor | vec4.fromValues(0.5, 0.5, 0.5, 1.0);
-        this.specularColor = specularColor | vec4.fromValues(1.0, 1.0, 1.0, 1.0);
-        this.glossiness = glossiness | 0.3;
+        this.ambientColor   = ambientColor  ?? vec4.fromValues(0.5, 0.5, 0.5, 1.0);
+        this.diffuseColor   = diffuseColor  ?? vec4.fromValues(0.5, 0.5, 0.5, 1.0);
+        this.specularColor  = specularColor ?? vec4.fromValues(1.0, 1.0, 1.0, 1.0);
+        this.glossiness     = glossiness    ?? 0.3;
 
         if (!PhongShaderMaterial.shaderProgram) {
             PhongShaderMaterial.shaderProgram = GlHelper.createShaderProgram(glContext, Material.vertexShaderSource, PhongShaderMaterial.fragmentShaderSource);
         }
     }
 
-    render() {
+    loadProgram() {
+        const shaderProgram = PhongShaderMaterial.shaderProgram;
+        this.gl.useProgram(shaderProgram);
+        const programInfo = {
+            program: shaderProgram,
+            attribLocations: {
+                vertexPosition: this.gl.getAttribLocation(shaderProgram, 'aVertexPosition'),
+            },
+            uniformLocations: {
+                projectionMatrix: this.gl.getUniformLocation(shaderProgram, 'uProjectionMatrix'),
+                modelViewMatrix:  this.gl.getUniformLocation(shaderProgram, 'uModelViewMatrix'),
+                ambientColor:  this.gl.getUniformLocation(shaderProgram, 'uAmbientColor'),
+                diffuseColor:  this.gl.getUniformLocation(shaderProgram, 'uDiffuseColor'),
+                specularColor:  this.gl.getUniformLocation(shaderProgram, 'uSpecularColor'),
+                glossiness:  this.gl.getUniformLocation(shaderProgram, 'uGlossiness'),
+            },
+        };
 
+        // set uniform values.
+        this.gl.uniform4fv(
+            programInfo.uniformLocations.ambientColor,
+            this.ambientColor
+        );
+        this.gl.uniform4fv(
+            programInfo.uniformLocations.diffuseColor,
+            this.diffuseColor
+        );
+        this.gl.uniform4fv(
+            programInfo.uniformLocations.specularColor,
+            this.specularColor
+        );
+        this.gl.uniform1f(
+            programInfo.uniformLocations.glossiness,
+            this.glossiness
+        );
+
+        return programInfo;
     }
 }
 
 class FlatShadedMaterial extends Material {
     static fragmentShaderSource = `
-        uniform highp vec4 color;
+        uniform highp vec4 uColor;
 
         void main() {
-            gl_FragColor = color;
+            gl_FragColor = uColor;
         }
     `;
 
@@ -288,16 +377,45 @@ class FlatShadedMaterial extends Material {
     constructor(glContext, color) {
         super(glContext);
 
+        this.color = color ?? vec4.fromValues(0.5, 0.5, 0.5, 1.0);
+
         if (!FlatShadedMaterial.shaderProgram) {
             FlatShadedMaterial.shaderProgram = GlHelper.createShaderProgram(glContext, Material.vertexShaderSource, FlatShadedMaterial.fragmentShaderSource);
         }
+    }
+
+    loadProgram() {
+        const shaderProgram = FlatShadedMaterial.shaderProgram;
+        this.gl.loadProgram(shaderProgram);
+        const programInfo = {
+            program: shaderProgram,
+            attribLocations: {
+                vertexPosition: this.gl.getAttribLocation(shaderProgram, 'aVertexPosition'),
+            },
+            uniformLocations: {
+                projectionMatrix: this.gl.getUniformLocation(shaderProgram, 'uProjectionMatrix'),
+                modelViewMatrix:  this.gl.getUniformLocation(shaderProgram, 'uModelViewMatrix'),
+                color:  this.gl.getUniformLocation(shaderProgram, 'uColor'),
+            },
+        };
+
+        // set uniform values.
+        this.gl.uniform4fv(
+            programInfo.uniformLocations.color,
+            this.color
+        );
+
+        return programInfo;
     }
 }
 
 class Camera extends Object3d {
     constructor() {
         super();
-        this.viewProjection = new Matrix();
+        this.viewProjection = mat4.create();
+        this.fov = 45;
+        this.nearClippingPlane = 0.1;
+        this.farClippingPlane = 2000;
     }
 }
 
