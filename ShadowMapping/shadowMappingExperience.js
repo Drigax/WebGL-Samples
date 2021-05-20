@@ -6,10 +6,13 @@ class Experience {
         this.materials = [];
         this.lights = [];
         this.camera = null;
+        this.onBeforeRenderCallbacks
     }
 
     update() {
-
+        if (this.onBeforeRender){
+            this.onBeforeRender();
+        }
     }
 
     render() {
@@ -34,9 +37,21 @@ class Experience {
 
         this.meshes.forEach(mesh => {
             const modelViewMatrix = mat4.create();
-            mat4.translate(modelViewMatrix,
-                           modelViewMatrix,
-                           [-0.0, 0.0, -6.0]);
+            //mat4.translate(modelViewMatrix,
+            //               modelViewMatrix,
+            //               [-0.0, 0.0, -6.0]);
+
+            const invCameraMatrix = mat4.create();
+            mat4.invert(invCameraMatrix,
+                        this.camera.getTransform());
+
+            mat4.multiply(modelViewMatrix,
+                          modelViewMatrix,
+                          invCameraMatrix);
+
+            mat4.multiply(modelViewMatrix,
+                          modelViewMatrix,
+                          mesh.getTransform());
 
             const numComponents = 3;
             const type = this.gl.FLOAT;
@@ -62,6 +77,41 @@ class Experience {
 
             const attributeBuffers = mesh.render(programInfo);
         });
+    }
+}
+
+class ShadowMappingExperience extends Experience {
+    constructor(glContext) {
+        super(glContext);
+        this.name = "ShadowMappingExperience";
+        console.log("Created" + this.name);
+
+        this.camera = new Camera();
+        this.camera.setPosition(0, 5, 10);
+        this.camera.setRotationDegrees(-15, 0, 0);
+
+        const box = new BoxMesh(glContext);
+        this.meshes.push(box);
+        box.setPosition(0, 2, 0);
+        box.setRotationDegrees(0, 0, 0);
+        box.material = new PhongShaderMaterial(glContext,
+            [0.5, 0.0, 0.0, 1.0],
+            [0.5, 0.0, 0.0, 1.0],
+            [0.5, 0.5, 0.5, 1.0],
+            0.3);
+
+        const ground = new GroundPlaneMesh(glContext);
+        this.meshes.push(ground);
+        ground.setPosition(0, 0, 0);
+        ground.setScaling(10, 10, 10);
+    }
+
+    update() {
+        super.update();
+    }
+
+    render() {
+        super.render();
     }
 }
 
@@ -127,49 +177,48 @@ class GlHelper {
     }
 
 }
-
-class ShadowMappingExperience extends Experience {
-    constructor(glContext) {
-        super(glContext);
-        this.name = "ShadowMappingExperience";
-        console.log("Created" + this.name);
-
-        this.camera = new Camera();
-        this.camera.setPosition(0, 5, -10);
-
-        const box = new BoxMesh(glContext);
-        this.meshes.push(box);
-        box.setPosition(0, 2, 0);
-        box.material = new PhongShaderMaterial(glContext,
-            [0.5, 0.0, 0.0, 1.0],
-            [0.5, 0.0, 0.0, 1.0],
-            [0.5, 0.5, 0.5, 1.0],
-            0.3);
-
-        const plane = new PlaneMesh(glContext);
-        this.meshes.push(plane);
-        plane.setPosition(0, 0, 0);
-    }
-
-    update() {
-        super.update();
-    }
-
-    render() {
-        super.render()
-    }
-}
-
 class Object3d {
     constructor(glContext) {
-        this.transform = mat4.create();
+        this._transform = mat4.create();
+        this._position = vec3.create();
+        this._rotation = quat.create();
+        this._scaling = vec3.fromValues(1.0, 1.0, 1.0);
         this.gl = glContext;
     }
 
+    getTransform(){
+        if (this._isDirty) {
+            mat4.fromRotationTranslationScale(this._transform, this._rotation, this._position, this._scaling);
+            this._isDirty = false;
+        }
+        return this._transform;
+    }
+
     setPosition(x, y, z) {
-        this.transform[12] = x; // m30
-        this.transform[13] = y; // m31
-        this.transform[14] = z; // m32
+        this._isDirty = true;
+        this._position[0] = x; // m30
+        this._position[1] = y; // m31
+        this._position[2] = z; // m32
+    }
+
+    setRotationDegrees(x, y, z){
+        this._isDirty = true;
+        quat.fromEuler(this._rotation, x, y, z);
+    }
+
+    setRotation(x, y, z, w) {
+        this._isDirty = true;
+        this._rotation[0] = x;
+        this._rotation[1] = y;
+        this._rotation[2] = z;
+        this._rotation[3] = w;
+    }
+
+    setScaling(x, y, z){
+        this._isDirty = true;
+        this._scaling[0] = x;
+        this._scaling[1] = y;
+        this._scaling[2] = z;
     }
 }
 
