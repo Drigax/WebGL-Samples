@@ -59,7 +59,7 @@ function main() {
     const renderNextFrame = () => {
         const diff = updateFps();
         setTimeout(() => {
-            experience.update();
+            experience.update(diff);
             startRender(glContext);
             experience.render();
             renderNextFrame();

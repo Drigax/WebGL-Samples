@@ -6,13 +6,37 @@ class Experience {
         this.materials = [];
         this.lights = [];
         this.camera = null;
-        this.onBeforeRenderCallbacks
+        this.deltaTime = 16;
     }
 
-    update() {
-        if (this.onBeforeRender){
-            this.onBeforeRender();
-        }
+    update(deltaTimeMs) {
+        this.deltaTime = deltaTimeMs;
+    }
+
+    /**
+     * Using the provided light orientation, generate a depth map of the scene from the perspective of the light.
+     *
+     * adapted from https://learnopengl.com/Advanced-Lighting/Shadows/Shadow-Mapping
+     */
+    renderShadowMap(light) {
+        const depthMap = this.gl.createTexture();
+
+        // set a texture slot to use this depthmap texture.
+        this.gl.bindTexture(this.gl.TEXTURE_2D, depthMap);
+
+        // Configure our depth map settings...
+        this.gl.texImage2D(this.gl.TEXTURE_2D, 0 /*no mipmapping*/, this.gl.DEPTH_COMPONENT24, Light.ShadowMapWidth, Light.ShadowMapHeight, 0, this.gl.DEPTH_COMPONENT24, this.gl.FLOAT, depthMap);
+        this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MIN_FILTER, this.gl.NEAREST);
+        this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MAG_FILTER, this.gl.NEAREST);
+        this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_WRAP_S, this.gl.REPEAT);
+        this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_WRAP_T, this.gl.REPEAT);
+
+        // bind this texture to be used as our framebuffer.
+        this.gl.framebufferTexture2D(this.gl.FRAMEBUFFER, this.gl.DEPTH_ATTACHMENT, this.gl.TEXTURE_2D, depthMap, 0);
+
+        this.meshes.forEach(mesh => {
+            mesh.render();
+        });
     }
 
     render() {
@@ -36,22 +60,9 @@ class Experience {
             this.camera.farClippingPlane);
 
         this.meshes.forEach(mesh => {
-            const modelViewMatrix = mat4.create();
-            //mat4.translate(modelViewMatrix,
-            //               modelViewMatrix,
-            //               [-0.0, 0.0, -6.0]);
-
-            const invCameraMatrix = mat4.create();
-            mat4.invert(invCameraMatrix,
+            const viewMatrix = mat4.create();
+            mat4.invert(viewMatrix,
                         this.camera.getTransform());
-
-            mat4.multiply(modelViewMatrix,
-                          modelViewMatrix,
-                          invCameraMatrix);
-
-            mat4.multiply(modelViewMatrix,
-                          modelViewMatrix,
-                          mesh.getTransform());
 
             const numComponents = 3;
             const type = this.gl.FLOAT;
@@ -70,10 +81,28 @@ class Experience {
             );
 
             this.gl.uniformMatrix4fv(
-                programInfo.uniformLocations.modelViewMatrix,
+                programInfo.uniformLocations.viewMatrix,
                 false,
-                modelViewMatrix
+                viewMatrix
             );
+
+            // TODO: add support for multiple lights
+            // we should keep MAX_LIGHTS * NUM_LIGHT_PROPERIES uniforms to store the light information for each light that affects this mesh.
+
+            // If the current shader program uses lighting uniforms, add this info to the uniform buffer.
+            if (programInfo.uniformLocations.lightMatrix && this.lights.length > 0){
+                this.gl.uniformMatrix4fv(
+                    programInfo.uniformLocations.lightMatrix,
+                    false,
+                    this.lights[0].getTransform()
+                );
+            }
+            if (programInfo.uniformLocations.lightBrightness && this.lights.length > 0){
+                this.gl.uniform1f(
+                    programInfo.uniformLocations.lightBrightness,
+                    this.lights[0].brightness
+                );
+            }
 
             const attributeBuffers = mesh.render(programInfo);
         });
@@ -87,8 +116,13 @@ class ShadowMappingExperience extends Experience {
         console.log("Created" + this.name);
 
         this.camera = new Camera();
-        this.camera.setPosition(0, 5, 10);
+        this.camera.setPosition(0, 5, 100);
         this.camera.setRotationDegrees(-15, 0, 0);
+
+        const light = new DirectionalLight();
+        light.setPosition(-5, 5, 5);
+        light.setRotationDegrees(45, -45, 0);
+        this.lights.push(light);
 
         const box = new BoxMesh(glContext);
         this.meshes.push(box);
@@ -100,14 +134,35 @@ class ShadowMappingExperience extends Experience {
             [0.5, 0.5, 0.5, 1.0],
             0.3);
 
-        const ground = new GroundPlaneMesh(glContext);
-        this.meshes.push(ground);
-        ground.setPosition(0, 0, 0);
-        ground.setScaling(10, 10, 10);
+        //const ground = new GroundPlaneMesh(glContext);
+        //this.meshes.push(ground);
+        //ground.setPosition(0, 0, 0);
+        //ground.setRotationDegrees(0, 180, 0);
+        //ground.setScaling(5, 5, 5);
     }
 
-    update() {
-        super.update();
+    increase = false;
+
+    update(deltaTimeMs) {
+        super.update(deltaTimeMs);
+        let cameraMin = -3;
+        let cameraMax = 3;
+        let cameraSpeed = 1;
+        let position = this.camera.getPosition();
+        if (position[0] < cameraMin) {
+            this.increase = true;
+        }
+        else if (position[0] > cameraMax) {
+            this.increase = false;
+        }
+        //console.log(this.camera.getPosition());
+        position[0] += cameraSpeed * (deltaTimeMs/1000) * (this.increase ? 1 : -1);
+        //console.log(position);
+
+        this.camera.setPosition(position[0], position[1], position[2]);
+
+        //console.log(deltaTimeMs);
+        //console.log(this.camera.getPosition());
     }
 
     render() {
@@ -194,6 +249,10 @@ class Object3d {
         return this._transform;
     }
 
+    getPosition(){
+        return this._position;
+    }
+
     setPosition(x, y, z) {
         this._isDirty = true;
         this._position[0] = x; // m30
@@ -206,12 +265,20 @@ class Object3d {
         quat.fromEuler(this._rotation, x, y, z);
     }
 
+    getRotation(){
+        return this._rotation;
+    }
+
     setRotation(x, y, z, w) {
         this._isDirty = true;
         this._rotation[0] = x;
         this._rotation[1] = y;
         this._rotation[2] = z;
         this._rotation[3] = w;
+    }
+
+    getScaling(){
+        return this._scaling;
     }
 
     setScaling(x, y, z){
@@ -228,62 +295,175 @@ class Mesh extends Object3d {
         this.vertices = [];
         this.indices = [];
         this.triangleDrawMode = glContext.TRIANGLES;
-        this.material = new PhongShaderMaterial(glContext,
-            vec4.fromValues(0.5, 0.5, 0.5, 1.0),
-            vec4.fromValues(0.5, 0.5, 0.5, 1.0),
-            vec4.fromValues(1.0, 1.0, 1.0, 1.0),
-            0.3
-        );
+        this.material = new FlatShadedMaterial(glContext,[0.5, 0.5, 0.5, 1.0]);
     }
 
     render(programInfo) {
+        this.gl.uniformMatrix4fv(
+            programInfo.uniformLocations.modelMatrix,
+            false,
+            this.getTransform()
+        );
+
+        // vertex positions
         const positionBuffer = this.gl.createBuffer();
         this.gl.bindBuffer(this.gl.ARRAY_BUFFER, positionBuffer);
-
         this.gl.bufferData(this.gl.ARRAY_BUFFER,
             new Float32Array(this.vertices),
             this.gl.STATIC_DRAW);
 
-        const numComponents = 3; // 3d vertex position vector
-        const type = this.gl.FLOAT;   // for now, only support floating point vertex formats
-        const normalize = false;
-        const stride = 0;
-        const offset = 0;
+        // triangle indices
+        const indexBuffer = this.gl.createBuffer();
+        this.gl.bindBuffer(this.gl.ELEMENT_ARRAY_BUFFER, indexBuffer);
+        this.gl.bufferData(this.gl.ELEMENT_ARRAY_BUFFER,
+            new Uint32Array(this.indices), this.gl.STATIC_DRAW);
 
-        this.gl.vertexAttribPointer(
-            programInfo.attribLocations.vertexPosition,
-            numComponents,
-            type,
-            normalize,
-            stride,
-            offset
-        );
-        this.gl.enableVertexAttribArray(
-            programInfo.attribLocations.vertexPosition
-        );
+        // vertex normals
+        const normalBuffer = this.gl.createBuffer();
+        this.gl.bindBuffer(this.gl.ARRAY_BUFFER, normalBuffer);
+        this.gl.bufferData(this.gl.ARRAY_BUFFER,
+            new Float32Array(this.normals),
+            this.gl.STATIC_DRAW);
 
-        const vertexCount = this.vertices.length / numComponents;
-        this.gl.drawArrays(this.triangleDrawMode, offset, vertexCount);
+        // Vertex attribute buffer binding
+        // Position Buffer
+        {
+            const numComponents = 3; // 3d vertex position vector
+            const type = this.gl.FLOAT;   // for now, only support floating point vertex formats
+            const normalize = false;
+            const stride = 0;
+            const offset = 0;
+
+            this.gl.bindBuffer(this.gl.ARRAY_BUFFER, positionBuffer);
+            this.gl.vertexAttribPointer(
+                programInfo.attribLocations.vertexPosition,
+                numComponents,
+                type,
+                normalize,
+                stride,
+                offset
+            );
+            this.gl.enableVertexAttribArray(
+                programInfo.attribLocations.vertexPosition
+            );
+        }
+
+        // Normal Buffer
+        {
+            const numComponents = 3
+            const type = this.gl.FLOAT;
+            const normalize = false;
+            const stride = 0;
+            const offset = 0;
+
+            this.gl.bindBuffer(this.gl.ARRAY_BUFFER, normalBuffer);
+            this.gl.vertexAttribPointer(
+                programInfo.attribLocations.vertexNormal,
+                numComponents,
+                type,
+                normalize,
+                stride,
+                offset
+            );
+        }
+
+        // Indices Buffer
+        this.gl.bindBuffer(this.gl.ELEMENT_ARRAY_BUFFER, indexBuffer);
+
+        this.gl.drawElements(this.triangleDrawMode, this.vertices.length/3, this.gl.UNSIGNED_SHORT, 0);
     }
 }
 
 class BoxMesh extends Mesh {
     constructor(glContext) {
         super(glContext);
+        /**
+         * box geometry borrowed from https://developer.mozilla.org/en-US/docs/Web/API/WebGL_API/Tutorial/Creating_3D_objects_using_WebGL
+         */
         this.vertices = [
-        -0.5, 0.5, 0.5,
-        -0.5, -0.5, 0.5,
-        0.5, 0.5, 0.5,
-        0.5, -0.5, 0.5,
-        0.5, 0.5, -0.5,
-        0.5, -0.5, -0.5,
-        -0.5, 0.5, -0.5,
-        -0.5, -0.5, -0.5,
-        -0.5, 0.5, 0.5,
-        -0.5, -0.5, 0.5
-        ];
-        this.indices = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
-        this.triangleDrawMode = glContext.TRIANGLE_STRIP;
+            // Front face
+            -0.5, -0.5,  0.5,
+             0.5, -0.5,  0.5,
+             0.5,  0.5,  0.5,
+            -0.5,  0.5,  0.5,
+
+            // Back face
+            -0.5, -0.5, -0.5,
+            -0.5,  0.5, -0.5,
+             0.5,  0.5, -0.5,
+             0.5, -0.5, -0.5,
+
+            // Top face
+            -0.5,  0.5, -0.5,
+            -0.5,  0.5,  0.5,
+             0.5,  0.5,  0.5,
+             0.5,  0.5, -0.5,
+
+            // Bottom face
+            -0.5, -0.5, -0.5,
+             0.5, -0.5, -0.5,
+             0.5, -0.5,  0.5,
+            -0.5, -0.5,  0.5,
+
+            // Right face
+             0.5, -0.5, -0.5,
+             0.5,  0.5, -0.5,
+             0.5,  0.5,  0.5,
+             0.5, -0.5,  0.5,
+
+            // Left face
+            -0.5, -0.5, -0.5,
+            -0.5, -0.5,  0.5,
+            -0.5,  0.5,  0.5,
+            -0.5,  0.5, -0.5,
+          ];
+
+        this.normals = [
+            // Front
+            0.0,  0.0,  1.0,
+            0.0,  0.0,  1.0,
+            0.0,  0.0,  1.0,
+            0.0,  0.0,  1.0,
+
+            // Back
+            0.0,  0.0, -1.0,
+            0.0,  0.0, -1.0,
+            0.0,  0.0, -1.0,
+            0.0,  0.0, -1.0,
+
+            // Top
+            0.0,  1.0,  0.0,
+            0.0,  1.0,  0.0,
+            0.0,  1.0,  0.0,
+            0.0,  1.0,  0.0,
+
+            // Bottom
+            0.0, -1.0,  0.0,
+            0.0, -1.0,  0.0,
+            0.0, -1.0,  0.0,
+            0.0, -1.0,  0.0,
+
+            // Right
+            1.0,  0.0,  0.0,
+            1.0,  0.0,  0.0,
+            1.0,  0.0,  0.0,
+            1.0,  0.0,  0.0,
+
+            // Left
+            -1.0,  0.0,  0.0,
+            -1.0,  0.0,  0.0,
+            -1.0,  0.0,  0.0,
+            -1.0,  0.0,  0.0
+            ];
+        this.indices = [
+                0,  1,  2,      0,  2,  3,    // front
+                4,  5,  6,      4,  6,  7,    // back
+                8,  9,  10,     8,  10, 11,   // top
+                12, 13, 14,     12, 14, 15,   // bottom
+                16, 17, 18,     16, 18, 19,   // right
+                20, 21, 22,     20, 22, 23,   // left
+              ];
+        this.triangleDrawMode = glContext.TRIANGLES;
     }
 }
 
@@ -291,13 +471,20 @@ class PlaneMesh extends Mesh {
     constructor(glContext) {
         super(glContext);
         this.vertices = [
-            0.5, 0.5, 0.0,
-            -0.5, 0.5, 0.0,
-            0.5, -0.5, 0.0,
-            -0.5, -0.5, 0.0
+             0.5,  0.5, 0.0, // top right
+            -0.5,  0.5, 0.0, // bottom right
+             0.5, -0.5, 0.0, // top left
+            -0.5, -0.5, 0.0  // bottom left
         ];
-        this.indices = [0, 1, 2, 3];
-        this.triangleDrawMode = glContext.TRIANGLE_STRIP;
+        this.normals = [
+            0.0,  0.0,  1.0, // pointing towards +Z
+            0.0,  0.0,  1.0,
+            0.0,  0.0,  1.0,
+            0.0,  0.0,  1.0,
+        ]
+        this.indices = [0, 1, 2,  0, 2, 1,
+                        2, 1, 3,  2, 3, 1];
+        this.triangleDrawMode = glContext.TRIANGLES;
     }
 }
 
@@ -308,13 +495,20 @@ class GroundPlaneMesh extends Mesh {
     constructor(glContext) {
         super(glContext);
         this.vertices = [
-            -0.5, 0.0, 0.5,
-            0.5, 0.0, 0.5,
-            -0.5, 0.0, -0.5,
-            0.5, 0.0, -0.5
-        ];
-        this.indices = [0, 1, 2, 3];
-        this.triangleDrawMode = glContext.TRIANGLE_STRIP;
+            -0.5,  0.0,  0.5, // front left
+             0.5,  0.0,  0.5, // front right
+            -0.5,  0.0, -0.5, // back left
+             0.5,  0.0, -0.5  // back right
+       ];
+       this.normals = [
+           0.0,  1.0,  1.0, // pointing towards +Y
+           0.0,  1.0,  1.0,
+           0.0,  1.0,  1.0,
+           0.0,  1.0,  1.0,
+       ]
+       this.indices = [0, 1, 2,   0, 2, 1,
+                       2, 1, 3,   2, 3, 1];
+       this.triangleDrawMode = glContext.TRIANGLES;
     }
 }
 
@@ -326,12 +520,19 @@ class Material {
      */
     static vertexShaderSource = `
         attribute highp vec4 aVertexPosition;
+        attribute highp vec4 aVertexNormal;
 
-        uniform mat4 uModelViewMatrix;
-        uniform mat4 uProjectionMatrix;
+        uniform highp mat4 uViewMatrix;
+        uniform highp mat4 uModelMatrix;
+        uniform highp mat4 uProjectionMatrix;
+
+        varying highp vec4 vVertexNormal;
+        varying highp vec4 vVertexPosition;
 
         void main() {
-            gl_Position = uProjectionMatrix * uModelViewMatrix * aVertexPosition;
+            vVertexPosition = aVertexPosition;
+            vVertexNormal = aVertexNormal;
+            gl_Position = uProjectionMatrix * uViewMatrix * uModelMatrix * aVertexPosition;
         }
     `;
 
@@ -345,15 +546,37 @@ class PhongShaderMaterial extends Material {
      * Vertex shader source courtesy of MDN WebGL tutorial:
      * https://developer.mozilla.org/en-US/docs/Web/API/WebGL_API/Tutorial/Adding_2D_content_to_a_WebGL_context
      *
+     * phong reflection model adapted from: https://en.wikipedia.org/wiki/Phong_reflection_model
      */
     static fragmentShaderSource = `
+        uniform highp mat4 uViewMatrix;
+        uniform highp mat4 uModelMatrix;
         uniform highp vec4 uAmbientColor;
         uniform highp vec4 uDiffuseColor;
         uniform highp vec4 uSpecularColor;
-        uniform highp vec4 uGlossiness;
+        uniform highp float uGlossiness;
+        uniform highp mat4 uLightMatrix;
+        uniform highp float uLightBrightness;
+
+        varying highp vec4 vVertexNormal;
+        varying highp vec4 vVertexPosition;
 
         void main() {
-            gl_FragColor = uAmbientColor;
+            highp vec4  vLightPos = uLightMatrix[3];
+            highp vec4  vVertexWorldPos = vVertexPosition * uModelMatrix;
+            highp vec4  vVertexWorldNormal = normalize(vVertexNormal * uModelMatrix);
+            highp vec4  vViewPos = uViewMatrix[3];
+
+            highp vec4  vN = normalize(vVertexNormal);
+            highp vec4  vL = normalize(vLightPos - vVertexWorldPos);
+            highp vec4  vR = normalize(normalize(dot(vL, vN)* 2.0 * vN) - vL);
+            highp vec4  vV = normalize(vViewPos - vVertexWorldPos);
+
+            gl_FragColor = vec4(1.0, 1.0, 1.0, 1.0);
+            //gl_FragColor = uAmbientColor +
+            //               uLightBrightness *
+            //               (   uDiffuseColor * max(dot(vL, vN), 0.0)
+            //                 + uSpecularColor * pow( max( dot(vR, vV), 0.0), uGlossiness));
         }
     `;
 
@@ -379,14 +602,17 @@ class PhongShaderMaterial extends Material {
             program: shaderProgram,
             attribLocations: {
                 vertexPosition: this.gl.getAttribLocation(shaderProgram, 'aVertexPosition'),
+                vertexNormal: this.gl.getAttribLocation(shaderProgram, 'aVertexNormal')
             },
             uniformLocations: {
                 projectionMatrix: this.gl.getUniformLocation(shaderProgram, 'uProjectionMatrix'),
-                modelViewMatrix:  this.gl.getUniformLocation(shaderProgram, 'uModelViewMatrix'),
+                modelMatrix:  this.gl.getUniformLocation(shaderProgram, 'uModelMatrix'),
+                viewMatrix:  this.gl.getUniformLocation(shaderProgram, 'uViewMatrix'),
                 ambientColor:  this.gl.getUniformLocation(shaderProgram, 'uAmbientColor'),
                 diffuseColor:  this.gl.getUniformLocation(shaderProgram, 'uDiffuseColor'),
                 specularColor:  this.gl.getUniformLocation(shaderProgram, 'uSpecularColor'),
-                glossiness:  this.gl.getUniformLocation(shaderProgram, 'uGlossiness'),
+                lightMatrix:  this.gl.getUniformLocation(shaderProgram, 'uLightMatrix'),
+                lightBrightness:  this.gl.getUniformLocation(shaderProgram, 'uLightBrightness')
             },
         };
 
@@ -443,7 +669,8 @@ class FlatShadedMaterial extends Material {
             },
             uniformLocations: {
                 projectionMatrix: this.gl.getUniformLocation(shaderProgram, 'uProjectionMatrix'),
-                modelViewMatrix:  this.gl.getUniformLocation(shaderProgram, 'uModelViewMatrix'),
+                modelMatrix:  this.gl.getUniformLocation(shaderProgram, 'uModelMatrix'),
+                viewMatrix:  this.gl.getUniformLocation(shaderProgram, 'uViewMatrix'),
                 color:  this.gl.getUniformLocation(shaderProgram, 'uColor'),
             },
         };
@@ -475,13 +702,25 @@ class Texture {
 }
 
 class Light extends Object3d {
-    constructor() {
-        super();
+    constructor(glContext, castShadow) {
+        super(glContext);
         this.brightness = 1; // brightness is measured in phong shader units, lumen.
-        this.shadowMapping = new ShadowMap();
     }
+
+    render(){
+
+    }
+
+    static ShadowMapWidth = 1024
+    static ShadowMapHeight = 1024
 }
 
-class ShadowMap {
+class DirectionalLight extends Light {
+    constructor(glContext, castShadow, direction){
+        super(glContext, castShadow);
+    }
 
+    render(){
+
+    }
 }
