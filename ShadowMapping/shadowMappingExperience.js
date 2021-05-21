@@ -19,6 +19,13 @@ class Experience {
      * adapted from https://learnopengl.com/Advanced-Lighting/Shadows/Shadow-Mapping
      */
     renderShadowMap(light) {
+
+        var ext = this.gl.getExtension('WEBGL_depth_texture');
+        if (ext === undefined){
+            // TODO: perhaps move this check to the rest of the webgl capabilities checks?
+            console.error("WEBGL_depth_texture is not available on this device! skipping shadow mapping...");
+        }
+
         // TODO: this should be created once at light creation...
         const depthMap = this.gl.createTexture();
 
@@ -40,22 +47,28 @@ class Experience {
         this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_WRAP_S, this.gl.REPEAT);
         this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_WRAP_T, this.gl.REPEAT);
 
-        // bind this texture to be used as our framebuffer.
-        //this.gl.framebufferTexture2D(this.gl.FRAMEBUFFER, this.gl.DEPTH_ATTACHMENT, this.gl.TEXTURE_2D, depthMap, 0);
+        // bind this texture to be used as our framebuffer if we are rendering to the shadowmap instead of the canvas.
+        if (!this._showShadowMap){
+            //this.gl.framebufferTexture2D(this.gl.FRAMEBUFFER, this.gl.DEPTH_ATTACHMENT, this.gl.TEXTURE_2D, depthMap, 0);
+        }
 
         // In order to create our shadowMap, we want to pretend that the light is a "camera" into the scene, and render what it "sees".
         // However, we only care about how far all the fragments in "view" are.
         const projectionMatrix = mat4.create();
-        const fieldOfView = this.light.getAngle() * Math.PI / 180;   // in radians
+        const aspect = this.gl.canvas.clientWidth / this.gl.canvas.clientHeight;
+        const fieldOfView = light.getAngle() * Math.PI / 180;   // in radians
         mat4.perspective(projectionMatrix,
             fieldOfView,
             aspect,
             this.camera.nearClippingPlane,
             this.camera.farClippingPlane);
 
-        // maybe make this a static reference?
-        const depthTestMaterial = new depthTestMaterial();
-        programInfo = depthTestMaterial.loadProgram();
+        // TODO: Make this a static reference for our light class?
+        const depthTestMaterial = new DepthTestMaterial(this.gl);
+        const programInfo = depthTestMaterial.loadProgram();
+
+        let lightPos = light.getPosition();
+        let lightRot = light.getRotation();
 
         const viewMatrix = mat4.create();
             mat4.invert(viewMatrix,
@@ -82,7 +95,10 @@ class Experience {
     render() {
 
         if (this.lights.length > 0){
-            //this.renderShadowMap(this.lights[0]);
+            this.renderShadowMap(this.lights[0]);
+            if (this._showShadowMap){
+                return;
+            }
         }
         this.gl.clearColor(this.clearColor[0], this.clearColor[1], this.clearColor[2], this.clearColor[3]);
         this.gl.clearDepth(1.0);
@@ -164,12 +180,6 @@ class ShadowMappingExperience extends Experience {
         this.camera.setPosition(0, 5, 10);
         this.camera.setRotationDegrees(-15, 0, 0);
 
-        const light = new DirectionalLight();
-        light.setPosition(-5, 10, 5);
-        light.setRotationDegrees(0, 0, 0);
-        light.setBrightness(1);
-        this.lights.push(light);
-
         const box = new BoxMesh(glContext);
         this.meshes.push(box);
         box.setPosition(0, 2, 0);
@@ -184,6 +194,27 @@ class ShadowMappingExperience extends Experience {
         this.meshes.push(ground);
         ground.setPosition(0, 0, 0);
         ground.setScaling(5, 5, 5);
+
+        const light = new DirectionalLight();
+        const lightLookat = mat4.create();
+        const lightPos = vec3.fromValues(-5, 5, 5);
+        const lightRot = quat.create();
+        mat4.targetTo(lightLookat, lightPos, box.getPosition(), vec3.fromValues(0, 1, 0));
+        mat4.getRotation(lightRot, lightLookat);
+
+        light.setPosition(lightPos[0], lightPos[1], lightPos[2]);
+        light.setRotation(lightRot[0], lightRot[1], lightRot[2], lightRot[3]);
+        light.setBrightness(1);
+        this.lights.push(light);
+
+        this._showShadowMap = false;
+
+        window.addEventListener("keyup", (event) => {
+            if (event.key === "Enter"){
+                this._showShadowMap = !this._showShadowMap;
+                console.log("Switching to " + (this._showShadowMap ? "shadowMap" : "camera") + " view.");
+            }
+          }, true);
     }
 
     increase = false;
@@ -200,14 +231,10 @@ class ShadowMappingExperience extends Experience {
         else if (position[0] > cameraMax) {
             this.increase = false;
         }
-        //console.log(this.camera.getPosition());
+
         position[0] += cameraSpeed * (deltaTimeMs/1000) * (this.increase ? 1 : -1);
-        //console.log(position);
 
         this.camera.setPosition(position[0], position[1], position[2]);
-
-        //console.log(deltaTimeMs);
-        //console.log(this.camera.getPosition());
     }
 
     render() {
@@ -487,6 +514,7 @@ class BoxMesh extends Mesh {
             0.0,  0.0, -1.0,
 
             // Top
+
             0.0,  1.0,  0.0,
             0.0,  1.0,  0.0,
             0.0,  1.0,  0.0,
@@ -600,22 +628,37 @@ class DepthTestMaterial extends Material {
     constructor(glContext, ambientColor, diffuseColor, specularColor, glossiness) {
         super(glContext);
 
-        this.ambientColor   = ambientColor  ?? vec4.fromValues(0.5, 0.5, 0.5, 1.0);
-        this.diffuseColor   = diffuseColor  ?? vec4.fromValues(0.5, 0.5, 0.5, 1.0);
-        this.specularColor  = specularColor ?? vec4.fromValues(1.0, 1.0, 1.0, 1.0);
-        this.glossiness     = glossiness    ?? 0.3;
-
-        if (!PhongShaderMaterial.shaderProgram) {
-            PhongShaderMaterial.shaderProgram = GlHelper.createShaderProgram(glContext, Material.vertexShaderSource, PhongShaderMaterial.fragmentShaderSource);
+        if (!DepthTestMaterial.shaderProgram) {
+            DepthTestMaterial.shaderProgram = GlHelper.createShaderProgram(glContext, Material.vertexShaderSource, DepthTestMaterial.fragmentShaderSource);
         }
     }
 
     static fragmentShaderSource = `
         void main() {
-            gl_FragDepth = gl_FragCoord.z;
-            gl_FragColor = vec4(gl_FragDepth, 0.0, 0.0, 1.0);
+            gl_FragColor = vec4(gl_FragCoord.z, 0.0, 0.0, 1.0);
         }
     `
+
+    static shaderProgram = null;
+
+    loadProgram() {
+        const shaderProgram = DepthTestMaterial.shaderProgram;
+        this.gl.useProgram(shaderProgram);
+        const programInfo = {
+            program: shaderProgram,
+            attribLocations: {
+                vertexPosition: this.gl.getAttribLocation(shaderProgram, 'aVertexPosition'),
+                vertexNormal: this.gl.getAttribLocation(shaderProgram, 'aVertexNormal')
+            },
+            uniformLocations: {
+                projectionMatrix: this.gl.getUniformLocation(shaderProgram, 'uProjectionMatrix'),
+                modelMatrix:  this.gl.getUniformLocation(shaderProgram, 'uModelMatrix'),
+                viewMatrix:  this.gl.getUniformLocation(shaderProgram, 'uViewMatrix')
+            },
+        };
+
+        return programInfo;
+    }
 }
 
 class PhongShaderMaterial extends Material {
@@ -792,7 +835,7 @@ class Light extends Object3d {
     constructor(glContext, castShadow) {
         super(glContext);
         this._brightness = 1; // brightness is measured in phong shader units, lumen.
-        this._angle = 360; // for now, emulate a point light.
+        this._angle = 45; // for now, emulate a spot light
     }
 
     render() {
