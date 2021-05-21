@@ -100,7 +100,7 @@ class Experience {
             if (programInfo.uniformLocations.lightBrightness && this.lights.length > 0){
                 this.gl.uniform1f(
                     programInfo.uniformLocations.lightBrightness,
-                    this.lights[0].brightness
+                    this.lights[0].getBrightness()
                 );
             }
 
@@ -116,12 +116,13 @@ class ShadowMappingExperience extends Experience {
         console.log("Created" + this.name);
 
         this.camera = new Camera();
-        this.camera.setPosition(0, 5, 100);
+        this.camera.setPosition(0, 5, 10);
         this.camera.setRotationDegrees(-15, 0, 0);
 
         const light = new DirectionalLight();
         light.setPosition(-5, 5, 5);
         light.setRotationDegrees(45, -45, 0);
+        light.setBrightness(0.3);
         this.lights.push(light);
 
         const box = new BoxMesh(glContext);
@@ -129,16 +130,15 @@ class ShadowMappingExperience extends Experience {
         box.setPosition(0, 2, 0);
         box.setRotationDegrees(0, 0, 0);
         box.material = new PhongShaderMaterial(glContext,
-            [0.5, 0.0, 0.0, 1.0],
+            [0.1, 0.0, 0.0, 1.0],
             [0.5, 0.0, 0.0, 1.0],
             [0.5, 0.5, 0.5, 1.0],
             0.3);
 
-        //const ground = new GroundPlaneMesh(glContext);
-        //this.meshes.push(ground);
-        //ground.setPosition(0, 0, 0);
-        //ground.setRotationDegrees(0, 180, 0);
-        //ground.setScaling(5, 5, 5);
+        const ground = new GroundPlaneMesh(glContext);
+        this.meshes.push(ground);
+        ground.setPosition(0, 0, 0);
+        ground.setScaling(5, 5, 5);
     }
 
     increase = false;
@@ -295,7 +295,11 @@ class Mesh extends Object3d {
         this.vertices = [];
         this.indices = [];
         this.triangleDrawMode = glContext.TRIANGLES;
-        this.material = new FlatShadedMaterial(glContext,[0.5, 0.5, 0.5, 1.0]);
+        this.material = new PhongShaderMaterial(glContext,
+                                                [0.1, 0.1, 0.1, 1.0],
+                                                [0.5, 0.5, 0.5, 1.0],
+                                                [1.0, 1.0, 1.0, 1.0],
+                                                0.3);
     }
 
     render(programInfo) {
@@ -316,7 +320,7 @@ class Mesh extends Object3d {
         const indexBuffer = this.gl.createBuffer();
         this.gl.bindBuffer(this.gl.ELEMENT_ARRAY_BUFFER, indexBuffer);
         this.gl.bufferData(this.gl.ELEMENT_ARRAY_BUFFER,
-            new Uint32Array(this.indices), this.gl.STATIC_DRAW);
+            new Uint16Array(this.indices), this.gl.STATIC_DRAW);
 
         // vertex normals
         const normalBuffer = this.gl.createBuffer();
@@ -373,7 +377,7 @@ class Mesh extends Object3d {
         // Indices Buffer
         this.gl.bindBuffer(this.gl.ELEMENT_ARRAY_BUFFER, indexBuffer);
 
-        this.gl.drawElements(this.triangleDrawMode, this.vertices.length/3, this.gl.UNSIGNED_SHORT, 0);
+        this.gl.drawElements(this.triangleDrawMode, this.indices.length, this.gl.UNSIGNED_SHORT, 0);
     }
 }
 
@@ -575,9 +579,9 @@ class PhongShaderMaterial extends Material {
             highp vec4  vR = normalize(normalize(dot(vL, vN)* 2.0 * vN) - vL);
             highp vec4  vV = normalize(vViewPos - vVertexWorldPos);
 
-            gl_FragColor = vec4(1.0, 1.0, 1.0, 1.0);
-            //gl_FragColor = uAmbientColor +
-            //               uLightBrightness *
+            //gl_FragColor = vec4(1.0, 1.0, 1.0, 1.0);
+            gl_FragColor = uAmbientColor +
+                           uLightBrightness * vec4(1.0, 1.0, 1.0, 1.0);
             //               (   uDiffuseColor * max(dot(vL, vN), 0.0)
             //                 + uSpecularColor * pow( max( dot(vR, vV), 0.0), uGlossiness));
         }
@@ -664,7 +668,7 @@ class FlatShadedMaterial extends Material {
 
     loadProgram() {
         const shaderProgram = FlatShadedMaterial.shaderProgram;
-        this.gl.loadProgram(shaderProgram);
+        this.gl.useProgram(shaderProgram);
         const programInfo = {
             program: shaderProgram,
             attribLocations: {
@@ -707,11 +711,19 @@ class Texture {
 class Light extends Object3d {
     constructor(glContext, castShadow) {
         super(glContext);
-        this.brightness = 1; // brightness is measured in phong shader units, lumen.
+        this._brightness = 1; // brightness is measured in phong shader units, lumen.
     }
 
     render(){
 
+    }
+
+    setBrightness(brightness){
+        this._brightness = brightness;
+    }
+
+    getBrightness(brightness){
+        return this._brightness;
     }
 
     static ShadowMapWidth = 1024
