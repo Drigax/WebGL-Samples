@@ -365,6 +365,9 @@ class Mesh extends Object3d {
                 stride,
                 offset
             );
+            this.gl.enableVertexAttribArray(
+                programInfo.attribLocations.vertexNormal
+            );
         }
 
         // Indices Buffer
