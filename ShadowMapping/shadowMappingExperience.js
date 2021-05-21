@@ -120,9 +120,9 @@ class ShadowMappingExperience extends Experience {
         this.camera.setRotationDegrees(-15, 0, 0);
 
         const light = new DirectionalLight();
-        light.setPosition(-5, 5, 5);
-        light.setRotationDegrees(45, -45, 0);
-        light.setBrightness(0.3);
+        light.setPosition(-5, 10, 5);
+        light.setRotationDegrees(0, 0, 0);
+        light.setBrightness(1);
         this.lights.push(light);
 
         const box = new BoxMesh(glContext);
@@ -133,7 +133,7 @@ class ShadowMappingExperience extends Experience {
             [0.1, 0.0, 0.0, 1.0],
             [0.5, 0.0, 0.0, 1.0],
             [0.5, 0.5, 0.5, 1.0],
-            0.3);
+            20.0);
 
         const ground = new GroundPlaneMesh(glContext);
         this.meshes.push(ground);
@@ -508,10 +508,10 @@ class GroundPlaneMesh extends Mesh {
              0.5,  0.0, -0.5  // back right
        ];
        this.normals = [
-           0.0,  1.0,  1.0, // pointing towards +Y
-           0.0,  1.0,  1.0,
-           0.0,  1.0,  1.0,
-           0.0,  1.0,  1.0,
+           0.0,  1.0,  0.0, // pointing towards +Y
+           0.0,  1.0,  0.0,
+           0.0,  1.0,  0.0,
+           0.0,  1.0,  0.0,
        ]
        this.indices = [0, 1, 2,   0, 2, 1,
                        2, 1, 3,   2, 3, 1];
@@ -526,20 +526,20 @@ class Material {
      *
      */
     static vertexShaderSource = `
-        attribute highp vec4 aVertexPosition;
-        attribute highp vec4 aVertexNormal;
+        attribute highp vec3 aVertexPosition;
+        attribute highp vec3 aVertexNormal;
 
         uniform highp mat4 uViewMatrix;
         uniform highp mat4 uModelMatrix;
         uniform highp mat4 uProjectionMatrix;
 
-        varying highp vec4 vVertexNormal;
-        varying highp vec4 vVertexPosition;
+        varying highp vec3 vVertexNormal;
+        varying highp vec3 vVertexPosition;
 
         void main() {
             vVertexPosition = aVertexPosition;
             vVertexNormal = aVertexNormal;
-            gl_Position = uProjectionMatrix * uViewMatrix * uModelMatrix * aVertexPosition;
+            gl_Position = uProjectionMatrix * uViewMatrix * uModelMatrix * vec4(aVertexPosition, 1.0);
         }
     `;
 
@@ -554,6 +554,7 @@ class PhongShaderMaterial extends Material {
      * https://developer.mozilla.org/en-US/docs/Web/API/WebGL_API/Tutorial/Adding_2D_content_to_a_WebGL_context
      *
      * phong reflection model adapted from: https://en.wikipedia.org/wiki/Phong_reflection_model
+     * phong reflection model checked for correctness against: https://www.mathematik.uni-marburg.de/~thormae/lectures/graphics1/code/WebGLShaderLightMat/ShaderLightMat.html
      */
     static fragmentShaderSource = `
         uniform highp mat4 uViewMatrix;
@@ -565,25 +566,37 @@ class PhongShaderMaterial extends Material {
         uniform highp mat4 uLightMatrix;
         uniform highp float uLightBrightness;
 
-        varying highp vec4 vVertexNormal;
-        varying highp vec4 vVertexPosition;
+        varying highp vec3 vVertexNormal;
+        varying highp vec3 vVertexPosition;
+
+        highp vec3 phongBrdf(highp vec3 vR, highp vec3 vV, highp vec3 diffuseColor, highp vec3 specularColor, highp float glossiness) {
+            highp vec3 color = diffuseColor;
+            highp float specularPercentage = max(dot(vR, vV), 0.0);
+            //highp float specularIntensity = pow(specularPercentage, uGlossiness);
+            return color;// + specularColor * specularIntensity; //TODO: fix specular reflection...
+        }
 
         void main() {
-            highp vec4  vLightPos = uLightMatrix[3];
-            highp vec4  vVertexWorldPos = vVertexPosition * uModelMatrix;
-            highp vec4  vVertexWorldNormal = normalize(vVertexNormal * uModelMatrix);
-            highp vec4  vViewPos = uViewMatrix[3];
+            highp vec3  vLightPos = uLightMatrix[3].xyz;
+            highp vec3  vVertexWorldPos = (uModelMatrix * vec4(vVertexPosition, 1.0)).xyz;
+            highp vec3  vVertexWorldNormal = normalize((vec4(vVertexNormal, 1) * uModelMatrix).xyz);
+            highp vec3  vViewPos = uViewMatrix[3].xyz;
 
-            highp vec4  vN = normalize(vVertexNormal);
-            highp vec4  vL = normalize(vLightPos - vVertexWorldPos);
-            highp vec4  vR = normalize(normalize(dot(vL, vN)* 2.0 * vN) - vL);
-            highp vec4  vV = normalize(vViewPos - vVertexWorldPos);
+            highp vec3  vN = normalize(vVertexNormal.xyz);
+            highp vec3  vL = normalize(vLightPos - vVertexWorldPos);
+            highp vec3  vR = reflect(-vL, vN);
+            highp vec3  vV = normalize(vVertexWorldPos - vViewPos);
 
-            //gl_FragColor = vec4(1.0, 1.0, 1.0, 1.0);
-            gl_FragColor = uAmbientColor +
-                           uLightBrightness * vec4(1.0, 1.0, 1.0, 1.0);
-            //               (   uDiffuseColor * max(dot(vL, vN), 0.0)
-            //                 + uSpecularColor * pow( max( dot(vR, vV), 0.0), uGlossiness));
+            highp vec3 luminance = uAmbientColor.xyz;
+
+            highp float illuminance = dot(vL, vN);
+            if (illuminance > 0.0){
+                highp vec3 brdfColor = phongBrdf(vR, vV, uDiffuseColor.rgb, uSpecularColor.rgb, uGlossiness);
+                luminance += brdfColor * illuminance * vec3(1.0, 1.0, 1.0); // for now, use white light.
+            }
+            //gl_FragColor = vec4(vV, 1.0);
+            gl_FragColor = vec4(luminance, 1.0);
+
         }
     `;
 
