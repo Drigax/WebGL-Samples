@@ -19,31 +19,76 @@ class Experience {
      * adapted from https://learnopengl.com/Advanced-Lighting/Shadows/Shadow-Mapping
      */
     renderShadowMap(light) {
+        // TODO: this should be created once at light creation...
         const depthMap = this.gl.createTexture();
+
+        this.gl.clearDepth(1.0);
+        this.gl.enable(this.gl.DEPTH_TEST);
+        this.gl.depthFunc(this.gl.LEQUAL);
+        this.gl.cullFace(this.gl.FRONT);
+
+        // clear the depth and color buffers.
+        this.gl.clear(this.gl.COLOR_BUFFER_BIT | this.gl.DEPTH_BUFFER_BIT);
 
         // set a texture slot to use this depthmap texture.
         this.gl.bindTexture(this.gl.TEXTURE_2D, depthMap);
 
         // Configure our depth map settings...
-        this.gl.texImage2D(this.gl.TEXTURE_2D, 0 /*no mipmapping*/, this.gl.DEPTH_COMPONENT24, Light.ShadowMapWidth, Light.ShadowMapHeight, 0, this.gl.DEPTH_COMPONENT24, this.gl.FLOAT, depthMap);
+        this.gl.texImage2D(this.gl.TEXTURE_2D, 0, this.gl.DEPTH_COMPONENT24, Light.ShadowMapWidth, Light.ShadowMapHeight, 0, this.gl.DEPTH_COMPONENT24, this.gl.FLOAT, depthMap);
         this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MIN_FILTER, this.gl.NEAREST);
         this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MAG_FILTER, this.gl.NEAREST);
         this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_WRAP_S, this.gl.REPEAT);
         this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_WRAP_T, this.gl.REPEAT);
 
         // bind this texture to be used as our framebuffer.
-        this.gl.framebufferTexture2D(this.gl.FRAMEBUFFER, this.gl.DEPTH_ATTACHMENT, this.gl.TEXTURE_2D, depthMap, 0);
+        //this.gl.framebufferTexture2D(this.gl.FRAMEBUFFER, this.gl.DEPTH_ATTACHMENT, this.gl.TEXTURE_2D, depthMap, 0);
+
+        // In order to create our shadowMap, we want to pretend that the light is a "camera" into the scene, and render what it "sees".
+        // However, we only care about how far all the fragments in "view" are.
+        const projectionMatrix = mat4.create();
+        const fieldOfView = this.light.getAngle() * Math.PI / 180;   // in radians
+        mat4.perspective(projectionMatrix,
+            fieldOfView,
+            aspect,
+            this.camera.nearClippingPlane,
+            this.camera.farClippingPlane);
+
+        // maybe make this a static reference?
+        const depthTestMaterial = new depthTestMaterial();
+        programInfo = depthTestMaterial.loadProgram();
+
+        const viewMatrix = mat4.create();
+            mat4.invert(viewMatrix,
+            light.getTransform());
+
+        // Set projection matrix and view matrices
+        this.gl.uniformMatrix4fv(
+            programInfo.uniformLocations.projectionMatrix,
+            false,
+            projectionMatrix
+        );
+
+        this.gl.uniformMatrix4fv(
+            programInfo.uniformLocations.viewMatrix,
+            false,
+            viewMatrix
+        );
 
         this.meshes.forEach(mesh => {
-            mesh.render();
+            mesh.render(programInfo);
         });
     }
 
     render() {
+
+        if (this.lights.length > 0){
+            //this.renderShadowMap(this.lights[0]);
+        }
         this.gl.clearColor(this.clearColor[0], this.clearColor[1], this.clearColor[2], this.clearColor[3]);
         this.gl.clearDepth(1.0);
         this.gl.enable(this.gl.DEPTH_TEST);
         this.gl.depthFunc(this.gl.LEQUAL);
+        //this.gl.cullFace(this.gl.BACK);
 
         // clear the depth and color buffers.
         this.gl.clear(this.gl.COLOR_BUFFER_BIT | this.gl.DEPTH_BUFFER_BIT);
@@ -73,7 +118,7 @@ class Experience {
             const material = mesh.material ?? new FlatShadedMaterial(this.gl, vec4.fromValues(0.5, 0.5, 0.5, 1.0));
             const programInfo = material.loadProgram();
 
-            // Set projection matrix and model view matrices
+            // Set projection matrix and view matrices
             this.gl.uniformMatrix4fv(
                 programInfo.uniformLocations.projectionMatrix,
                 false,
@@ -230,8 +275,8 @@ class GlHelper {
 
         return shader;
     }
-
 }
+
 class Object3d {
     constructor(glContext) {
         this._transform = mat4.create();
@@ -303,12 +348,15 @@ class Mesh extends Object3d {
     }
 
     render(programInfo) {
-        this.gl.uniformMatrix4fv(
-            programInfo.uniformLocations.modelMatrix,
-            false,
-            this.getTransform()
-        );
+        if (programInfo.uniformLocations.modelMatrix) {
+            this.gl.uniformMatrix4fv(
+                programInfo.uniformLocations.modelMatrix,
+                false,
+                this.getTransform()
+            );
+        }
 
+        // TODO: we only need to create vertex buffers once at startup, and when mesh geometry changes. move to an init function.
         // vertex positions
         const positionBuffer = this.gl.createBuffer();
         this.gl.bindBuffer(this.gl.ARRAY_BUFFER, positionBuffer);
@@ -331,7 +379,7 @@ class Mesh extends Object3d {
 
         // Vertex attribute buffer binding
         // Position Buffer
-        {
+        if (programInfo.attribLocations.vertexPosition){
             const numComponents = 3; // 3d vertex position vector
             const type = this.gl.FLOAT;   // for now, only support floating point vertex formats
             const normalize = false;
@@ -339,6 +387,7 @@ class Mesh extends Object3d {
             const offset = 0;
 
             this.gl.bindBuffer(this.gl.ARRAY_BUFFER, positionBuffer);
+
             this.gl.vertexAttribPointer(
                 programInfo.attribLocations.vertexPosition,
                 numComponents,
@@ -353,13 +402,12 @@ class Mesh extends Object3d {
         }
 
         // Normal Buffer
-        {
+        if (programInfo.attribLocations.vertexNormal) {
             const numComponents = 3
             const type = this.gl.FLOAT;
             const normalize = false;
             const stride = 0;
             const offset = 0;
-
             this.gl.bindBuffer(this.gl.ARRAY_BUFFER, normalBuffer);
             this.gl.vertexAttribPointer(
                 programInfo.attribLocations.vertexNormal,
@@ -548,13 +596,33 @@ class Material {
     }
 }
 
+class DepthTestMaterial extends Material {
+    constructor(glContext, ambientColor, diffuseColor, specularColor, glossiness) {
+        super(glContext);
+
+        this.ambientColor   = ambientColor  ?? vec4.fromValues(0.5, 0.5, 0.5, 1.0);
+        this.diffuseColor   = diffuseColor  ?? vec4.fromValues(0.5, 0.5, 0.5, 1.0);
+        this.specularColor  = specularColor ?? vec4.fromValues(1.0, 1.0, 1.0, 1.0);
+        this.glossiness     = glossiness    ?? 0.3;
+
+        if (!PhongShaderMaterial.shaderProgram) {
+            PhongShaderMaterial.shaderProgram = GlHelper.createShaderProgram(glContext, Material.vertexShaderSource, PhongShaderMaterial.fragmentShaderSource);
+        }
+    }
+
+    static fragmentShaderSource = `
+        void main() {
+            gl_FragDepth = gl_FragCoord.z;
+            gl_FragColor = vec4(gl_FragDepth, 0.0, 0.0, 1.0);
+        }
+    `
+}
+
 class PhongShaderMaterial extends Material {
+
     /**
-     * Vertex shader source courtesy of MDN WebGL tutorial:
-     * https://developer.mozilla.org/en-US/docs/Web/API/WebGL_API/Tutorial/Adding_2D_content_to_a_WebGL_context
-     *
-     * phong reflection model adapted from: https://en.wikipedia.org/wiki/Phong_reflection_model
-     * phong reflection model checked for correctness against: https://www.mathematik.uni-marburg.de/~thormae/lectures/graphics1/code/WebGLShaderLightMat/ShaderLightMat.html
+     * Phong reflection model adapted from: https://en.wikipedia.org/wiki/Phong_reflection_model
+     * Phong reflection model checked for correctness against: https://www.mathematik.uni-marburg.de/~thormae/lectures/graphics1/code/WebGLShaderLightMat/ShaderLightMat.html
      */
     static fragmentShaderSource = `
         uniform highp mat4 uViewMatrix;
@@ -594,9 +662,8 @@ class PhongShaderMaterial extends Material {
                 highp vec3 brdfColor = phongBrdf(vR, vV, uDiffuseColor.rgb, uSpecularColor.rgb, uGlossiness);
                 luminance += brdfColor * illuminance * vec3(1.0, 1.0, 1.0); // for now, use white light.
             }
-            //gl_FragColor = vec4(vV, 1.0);
-            gl_FragColor = vec4(luminance, 1.0);
 
+            gl_FragColor = vec4(luminance, 1.0);
         }
     `;
 
@@ -725,17 +792,26 @@ class Light extends Object3d {
     constructor(glContext, castShadow) {
         super(glContext);
         this._brightness = 1; // brightness is measured in phong shader units, lumen.
+        this._angle = 360; // for now, emulate a point light.
     }
 
-    render(){
+    render() {
 
     }
 
-    setBrightness(brightness){
+    getAngle(){
+        return this._angle;
+    }
+
+    setAngle(angle){
+        this.angle = angle;
+    }
+
+    setBrightness(brightness) {
         this._brightness = brightness;
     }
 
-    getBrightness(brightness){
+    getBrightness(brightness) {
         return this._brightness;
     }
 
