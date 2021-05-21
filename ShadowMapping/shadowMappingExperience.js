@@ -379,7 +379,7 @@ class Mesh extends Object3d {
 
         // Vertex attribute buffer binding
         // Position Buffer
-        if (programInfo.attribLocations.vertexPosition){
+        if (programInfo.attribLocations.vertexPosition !== undefined){
             const numComponents = 3; // 3d vertex position vector
             const type = this.gl.FLOAT;   // for now, only support floating point vertex formats
             const normalize = false;
@@ -402,7 +402,7 @@ class Mesh extends Object3d {
         }
 
         // Normal Buffer
-        if (programInfo.attribLocations.vertexNormal) {
+        if (programInfo.attribLocations.vertexNormal !== undefined) {
             const numComponents = 3
             const type = this.gl.FLOAT;
             const normalize = false;
