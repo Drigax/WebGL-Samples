@@ -197,8 +197,10 @@ class ShadowMappingExperience extends Experience {
 
         const light = new DirectionalLight();
         const lightLookat = mat4.create();
-        const lightPos = vec3.fromValues(-5, 5, 5);
+        const lightPos = vec3.fromValues(-5, 10, 5);
         const lightRot = quat.create();
+        light.setPosition(lightPos[0], lightPos[1], lightPos[2]);
+
         mat4.targetTo(lightLookat, lightPos, box.getPosition(), vec3.fromValues(0, 1, 0));
         mat4.getRotation(lightRot, lightLookat);
 
@@ -207,7 +209,42 @@ class ShadowMappingExperience extends Experience {
         light.setBrightness(1);
         this.lights.push(light);
 
-        this._showShadowMap = false;
+        this._showShadowMap = true;
+
+        let cameraMin = -3;
+        let cameraMax = 3;
+        let cameraSpeed = 1;
+        let lightMin = -5;
+        let lightMax = 5;
+        let lightSpeed = 10;
+        let cameraIncreasing = false;
+        let lightIncreasing = false;
+
+
+        this.update = (deltaTimeMs) => {
+            //todo: this should be in the constructor's context
+            super.update(deltaTimeMs);
+
+            let doAlternatingXMovement = function (object, minX, maxX, speed, increasing) {
+                const position = object.getPosition();
+                if (position[0] < minX) {
+                    increasing = true;
+                }
+                else if (position[0] > maxX) {
+                    increasing = false;
+                }
+                position[0] += speed * (deltaTimeMs/1000) * (increasing ? 1 : -1);
+                object.setPosition(position[0], position[1], position[2]);
+                return increasing;
+            }
+
+            cameraIncreasing = doAlternatingXMovement(this.camera, cameraMin, cameraMax, cameraSpeed, cameraIncreasing);
+            lightIncreasing = doAlternatingXMovement(light, lightMin, lightMax, lightSpeed, lightIncreasing);
+
+            mat4.targetTo(lightLookat, light.getPosition(), box.getPosition(), vec3.fromValues(0, 1, 0));
+            mat4.getRotation(lightRot, lightLookat);
+            light.setRotation(lightRot[0], lightRot[1], lightRot[2], lightRot[3]);
+        }
 
         window.addEventListener("keyup", (event) => {
             if (event.key === "Enter"){
@@ -215,26 +252,6 @@ class ShadowMappingExperience extends Experience {
                 console.log("Switching to " + (this._showShadowMap ? "shadowMap" : "camera") + " view.");
             }
           }, true);
-    }
-
-    increase = false;
-
-    update(deltaTimeMs) {
-        super.update(deltaTimeMs);
-        let cameraMin = -3;
-        let cameraMax = 3;
-        let cameraSpeed = 1;
-        let position = this.camera.getPosition();
-        if (position[0] < cameraMin) {
-            this.increase = true;
-        }
-        else if (position[0] > cameraMax) {
-            this.increase = false;
-        }
-
-        position[0] += cameraSpeed * (deltaTimeMs/1000) * (this.increase ? 1 : -1);
-
-        this.camera.setPosition(position[0], position[1], position[2]);
     }
 
     render() {
