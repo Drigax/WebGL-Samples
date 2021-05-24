@@ -206,7 +206,7 @@ class ShadowMappingExperience extends Experience {
         light.setBrightness(1);
         this.lights.push(light);
 
-        this.overlay = new ScreenQuadMesh(glContext, GlHelper.loadTexture(glContext, "UvTexture.jpg"));
+        this.overlay = new ScreenQuadMesh(glContext, light.getShadowMap());
 
         let cameraMin = -3;
         let cameraMax = 3;
