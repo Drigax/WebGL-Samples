@@ -7,6 +7,8 @@ class Experience {
         this.lights = [];
         this.camera = null;
         this.deltaTime = 16;
+        this._showOverlay = false;
+        this.overlay = null;
     }
 
     update(deltaTimeMs) {
@@ -18,14 +20,13 @@ class Experience {
      *
      * adapted from https://learnopengl.com/Advanced-Lighting/Shadows/Shadow-Mapping
      */
-    renderShadowMap(light) {        
+    renderShadowMap(light) {
         this.gl.clearDepth(1.0);
         this.gl.enable(this.gl.DEPTH_TEST);
         this.gl.depthFunc(this.gl.LEQUAL);
-        this.gl.cullFace(this.gl.FRONT);
+        this.gl.cullFace(this.gl.BACK);
 
-        this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, (this._showShadowMap ? null : light.getShadowMapFramebuffer()));
-
+        this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, light.getShadowMapFramebuffer());
 
         // clear the depth and color buffers.
         this.gl.clear(this.gl.COLOR_BUFFER_BIT | this.gl.DEPTH_BUFFER_BIT);
@@ -68,15 +69,14 @@ class Experience {
         this.meshes.forEach(mesh => {
             mesh.render(programInfo);
         });
+
+        this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, null);
     }
 
     render() {
         //this.gl.viewport(0, 0, this.gl.canvas.width, this.gl.canvas.clientHeight);
         if (this.lights.length > 0){
             this.renderShadowMap(this.lights[0]);
-            if (this._showShadowMap){
-                return;
-            }
         }
 
         this.gl.clearColor(this.clearColor[0], this.clearColor[1], this.clearColor[2], this.clearColor[3]);
@@ -159,6 +159,11 @@ class Experience {
 
             const attributeBuffers = mesh.render(programInfo);
         });
+
+        if (this.overlay && this._showOverlay){
+            const programInfo = this.overlay.material.loadProgram();
+            this.overlay.render(programInfo);
+        }
     }
 }
 
@@ -201,7 +206,7 @@ class ShadowMappingExperience extends Experience {
         light.setBrightness(1);
         this.lights.push(light);
 
-        this._showShadowMap = true;
+        this.overlay = new ScreenQuadMesh(glContext, light.getShadowMap());
 
         let cameraMin = -3;
         let cameraMax = 3;
@@ -240,8 +245,8 @@ class ShadowMappingExperience extends Experience {
 
         window.addEventListener("keyup", (event) => {
             if (event.key === "Enter"){
-                this._showShadowMap = !this._showShadowMap;
-                console.log("Switching to " + (this._showShadowMap ? "shadowMap" : "camera") + " view.");
+                this._showOverlay = !this._showOverlay;
+                console.log("Switching to " + (this._showOverlay ? "shadowMap" : "camera") + " view.");
             }
           }, true);
     }
@@ -416,7 +421,7 @@ class Mesh extends Object3d {
 
         this.vertexBuffers["position"] = positionBuffer;
         this.vertexBuffers["normal"] = normalBuffer;
-        this.vertexBuffers["uv"] = uvBuffer; 
+        this.vertexBuffers["uv"] = uvBuffer;
         this.vertexBuffers["index"] = indexBuffer;
     }
 
@@ -602,10 +607,10 @@ class PlaneMesh extends Mesh {
     constructor(glContext) {
         super(glContext);
         this.vertices = [
-             0.5,  0.5, 0.0, // top right
-            -0.5,  0.5, 0.0, // bottom right
-             0.5, -0.5, 0.0, // top left
-            -0.5, -0.5, 0.0  // bottom left
+            1, 1, 0.0, // top right
+            0, 1, 0.0, // bottom right
+            1, 0, 0.0, // top left
+            0, 0, 0.0  // bottom left
         ];
         this.normals = [
             0.0,  0.0,  1.0, // pointing towards +Z
@@ -623,6 +628,109 @@ class PlaneMesh extends Mesh {
                         2, 1, 3,  2, 3, 1];
         this.triangleDrawMode = glContext.TRIANGLES;
         this._init();
+    }
+}
+
+class ScreenQuadMesh extends PlaneMesh {
+    constructor(glContext, texture) {
+        super(glContext);
+
+        this.material = new ScreenQuadMaterial(glContext, texture);
+        this._transform2d = mat3.create();
+    }
+
+    getTransform(){
+        const isDirty = this._isDirty;
+        super.getTransform();
+
+        if(isDirty){
+            mat3.identity(this._transform2d);
+            mat3.scale(this._transform2d, this._transform2d, vec2.fromValues(this._scaling[0], this._scaling[1]));
+            mat3.rotate(this._transform2d, this._transform2d, quat.getAxisAngle(vec3.fromValues(0, 0, 1), this._rotation));
+            mat3.translate(this._transform2d, this._transform2d, vec2.fromValues(this._position[0], this._position[1]));
+        }
+        return this._transform2d;
+    }
+
+    render(programInfo) {
+        if (programInfo.uniformLocations.transform2d) {
+            this.gl.uniformMatrix3fv(
+                programInfo.uniformLocations.transform2d,
+                false,
+                this.getTransform()
+            );
+        }
+
+        // Vertex attribute buffer binding
+        // Position Buffer
+        if (programInfo.attribLocations.vertexPosition !== undefined){
+            const numComponents = 3; // 3d vertex position vector
+            const type = this.gl.FLOAT;   // for now, only support floating point vertex formats
+            const normalize = false;
+            const stride = 0;
+            const offset = 0;
+
+            this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.vertexBuffers["position"]);
+
+            this.gl.vertexAttribPointer(
+                programInfo.attribLocations.vertexPosition,
+                numComponents,
+                type,
+                normalize,
+                stride,
+                offset
+            );
+            this.gl.enableVertexAttribArray(
+                programInfo.attribLocations.vertexPosition
+            );
+        }
+
+        // Normal Buffer
+        if (programInfo.attribLocations.vertexNormal !== undefined) {
+            const numComponents = 3
+            const type = this.gl.FLOAT;
+            const normalize = false;
+            const stride = 0;
+            const offset = 0;
+            this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.vertexBuffers["normal"]);
+            this.gl.vertexAttribPointer(
+                programInfo.attribLocations.vertexNormal,
+                numComponents,
+                type,
+                normalize,
+                stride,
+                offset
+            );
+            this.gl.enableVertexAttribArray(
+                programInfo.attribLocations.vertexNormal
+            );
+        }
+
+        // UV Buffer
+        if (programInfo.attribLocations.vertexUV !== undefined) {
+            const numComponents = 2
+            const type = this.gl.FLOAT;
+            const normalize = false;
+            const stride = 0;
+            const offset = 0;
+            this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.vertexBuffers["uv"]);
+            this.gl.vertexAttribPointer(
+                programInfo.attribLocations.vertexUV,
+                numComponents,
+                type,
+                normalize,
+                stride,
+                offset
+            );
+            this.gl.enableVertexAttribArray(
+                programInfo.attribLocations.vertexUV
+            );
+        }
+
+        // Indices Buffer
+        this.gl.bindBuffer(this.gl.ELEMENT_ARRAY_BUFFER, this.vertexBuffers["index"]);
+
+        this.gl.drawElements(this.triangleDrawMode, this.indices.length, this.gl.UNSIGNED_SHORT, 0);
     }
 }
 
@@ -658,20 +766,28 @@ class Material {
      *
      */
     static vertexShaderSource = `
-        attribute highp vec3 aVertexPosition;
-        attribute highp vec3 aVertexNormal;
+        precision highp float;
 
-        uniform highp mat4 uViewMatrix;
-        uniform highp mat4 uModelMatrix;
-        uniform highp mat4 uProjectionMatrix;
+        attribute vec3 aVertexPosition;
+        attribute vec3 aVertexNormal;
+        attribute vec2 aVertexUv;
 
-        varying highp vec3 vVertexNormal;
-        varying highp vec3 vVertexPosition;
+        uniform mat4 uViewMatrix;
+        uniform mat4 uModelMatrix;
+        uniform mat4 uProjectionMatrix;
+
+        varying vec3 vVertexNormal;
+        varying vec3 vVertexPosition;
+        varying vec2 vVertexUv;
+
+        varying vec4 vWorldPosition;
 
         void main() {
             vVertexPosition = aVertexPosition;
             vVertexNormal = aVertexNormal;
-            gl_Position = uProjectionMatrix * uViewMatrix * uModelMatrix * vec4(aVertexPosition, 1.0);
+            vVertexUv = aVertexUv;
+            vWorldPosition = uProjectionMatrix * uViewMatrix * uModelMatrix * vec4(aVertexPosition, 1.0);
+            gl_Position = vWorldPosition;
         }
     `;
 
@@ -690,8 +806,12 @@ class DepthTestMaterial extends Material {
     }
 
     static fragmentShaderSource = `
+        precision mediump float;
+
+        varying vec4 vWorldPosition;
+
         void main() {
-            gl_FragColor = vec4(gl_FragCoord.z, 0.0, 0.0, 1.0);
+            gl_FragColor = vec4(vWorldPosition.z, 0.0, 0.0, 1.0);
         }
     `
 
@@ -704,12 +824,73 @@ class DepthTestMaterial extends Material {
             program: shaderProgram,
             attribLocations: {
                 vertexPosition: this.gl.getAttribLocation(shaderProgram, 'aVertexPosition'),
-                vertexNormal: this.gl.getAttribLocation(shaderProgram, 'aVertexNormal')
+                vertexNormal: this.gl.getAttribLocation(shaderProgram, 'aVertexNormal'),
+                vertexUv: this.gl.getAttribLocation(shaderProgram, 'aVertexUv')
             },
             uniformLocations: {
                 projectionMatrix: this.gl.getUniformLocation(shaderProgram, 'uProjectionMatrix'),
                 modelMatrix:  this.gl.getUniformLocation(shaderProgram, 'uModelMatrix'),
                 viewMatrix:  this.gl.getUniformLocation(shaderProgram, 'uViewMatrix')
+            },
+        };
+
+        return programInfo;
+    }
+}
+
+class ScreenQuadMaterial extends Material {
+    constructor(glContext, texture){
+        super(glContext);
+
+        if (!ScreenQuadMaterial.shaderProgram) {
+            ScreenQuadMaterial.shaderProgram = GlHelper.createShaderProgram(glContext, ScreenQuadMaterial.vertexShaderSource, ScreenQuadMaterial.fragmentShaderSource);
+        }
+    }
+
+    static vertexShaderSource = `
+        precision highp float;
+
+        attribute vec2 aVertexPosition;
+
+        uniform mat3 uTransform2d;
+
+        varying vec2 vVertexUv;
+
+        void main(){
+            vec2 vertPos = aVertexPosition - vec2(0.5, 0.5); // move from 0->1 to -0.5-> 0.5;
+            vertPos *= 2.0; // -0.5->0.5 to -1->1;
+            gl_Position = vec4(uTransform2d * vec3(vertPos, 0.0), 1.0);
+
+            // Use vertex position as our texture coordinates, since this is intended for a unit quad.
+            vVertexUv = aVertexPosition;
+        }
+    `;
+
+    static fragmentShaderSource = `
+        precision highp float;
+
+        uniform sampler2D uTexture;
+
+        varying vec2 vVertexUv;
+
+        void main() {
+            gl_FragColor = texture2D(uTexture, vVertexUv);
+        }
+    `;
+
+    static shaderProgram = null;
+
+    loadProgram() {
+        const shaderProgram = ScreenQuadMaterial.shaderProgram;
+        this.gl.useProgram(shaderProgram);
+        const programInfo = {
+            program: shaderProgram,
+            attribLocations: {
+                vertexPosition: this.gl.getAttribLocation(shaderProgram, 'aVertexPosition')
+            },
+            uniformLocations: {
+                transform2d:  this.gl.getUniformLocation(shaderProgram, 'uTransform2d'),
+                texture:  this.gl.getUniformLocation(shaderProgram, 'uTexture'),
             },
         };
 
@@ -724,42 +905,44 @@ class PhongShaderMaterial extends Material {
      * Phong reflection model checked for correctness against: https://www.mathematik.uni-marburg.de/~thormae/lectures/graphics1/code/WebGLShaderLightMat/ShaderLightMat.html
      */
     static fragmentShaderSource = `
-        uniform highp mat4 uViewMatrix;
-        uniform highp mat4 uModelMatrix;
-        uniform highp vec4 uAmbientColor;
-        uniform highp vec4 uDiffuseColor;
-        uniform highp vec4 uSpecularColor;
-        uniform highp float uGlossiness;
-        uniform highp mat4 uLightMatrix;
-        uniform highp float uLightBrightness;
-        uniform highp sampler2D uShadowMapSampler;
+        precision highp float;
 
-        varying highp vec3 vVertexNormal;
-        varying highp vec3 vVertexPosition;
+        uniform mat4 uViewMatrix;
+        uniform mat4 uModelMatrix;
+        uniform vec4 uAmbientColor;
+        uniform vec4 uDiffuseColor;
+        uniform vec4 uSpecularColor;
+        uniform float uGlossiness;
+        uniform mat4 uLightMatrix;
+        uniform float uLightBrightness;
+        uniform sampler2D uShadowMapSampler;
 
-        highp vec3 phongBrdf(highp vec3 vR, highp vec3 vV, highp vec3 diffuseColor, highp vec3 specularColor, highp float glossiness) {
-            highp vec3 color = diffuseColor;
-            highp float specularPercentage = max(dot(vR, vV), 0.0);
+        varying vec3 vVertexNormal;
+        varying vec3 vVertexPosition;
+
+        vec3 phongBrdf(highp vec3 vR, highp vec3 vV, highp vec3 diffuseColor, highp vec3 specularColor, highp float glossiness) {
+            vec3 color = diffuseColor;
+            float specularPercentage = max(dot(vR, vV), 0.0);
             //highp float specularIntensity = pow(specularPercentage, uGlossiness);
             return color;// + specularColor * specularIntensity; //TODO: fix specular reflection...
         }
 
         void main() {
-            highp vec3  vLightPos = uLightMatrix[3].xyz;
-            highp vec3  vVertexWorldPos = (uModelMatrix * vec4(vVertexPosition, 1.0)).xyz;
-            highp vec3  vVertexWorldNormal = normalize((vec4(vVertexNormal, 1) * uModelMatrix).xyz);
-            highp vec3  vViewPos = uViewMatrix[3].xyz;
+            vec3  vLightPos = uLightMatrix[3].xyz;
+            vec3  vVertexWorldPos = (uModelMatrix * vec4(vVertexPosition, 1.0)).xyz;
+            vec3  vVertexWorldNormal = normalize((vec4(vVertexNormal, 1) * uModelMatrix).xyz);
+            vec3  vViewPos = uViewMatrix[3].xyz;
 
-            highp vec3  vN = normalize(vVertexNormal.xyz);
-            highp vec3  vL = normalize(vLightPos - vVertexWorldPos);
-            highp vec3  vR = reflect(-vL, vN);
-            highp vec3  vV = normalize(vVertexWorldPos - vViewPos);
+            vec3  vN = normalize(vVertexNormal.xyz);
+            vec3  vL = normalize(vLightPos - vVertexWorldPos);
+            vec3  vR = reflect(-vL, vN);
+            vec3  vV = normalize(vVertexWorldPos - vViewPos);
 
-            highp vec3 luminance = uAmbientColor.xyz;
+            vec3 luminance = uAmbientColor.xyz;
 
-            highp float illuminance = dot(vL, vN);
+            float illuminance = dot(vL, vN);
             if (illuminance > 0.0){
-                highp vec3 brdfColor = phongBrdf(vR, vV, uDiffuseColor.rgb, uSpecularColor.rgb, uGlossiness);
+                vec3 brdfColor = phongBrdf(vR, vV, uDiffuseColor.rgb, uSpecularColor.rgb, uGlossiness);
                 luminance += brdfColor * illuminance * vec3(1.0, 1.0, 1.0); // for now, use white light.
             }
 
@@ -769,7 +952,7 @@ class PhongShaderMaterial extends Material {
 
     static shaderProgram = null;
 
-    constructor(glContext, ambientColor, diffuseColor, specularColor, glossiness) {
+        constructor(glContext, ambientColor, diffuseColor, specularColor, glossiness) {
         super(glContext);
 
         this.ambientColor   = ambientColor  ?? vec4.fromValues(0.5, 0.5, 0.5, 1.0);
@@ -828,10 +1011,11 @@ class PhongShaderMaterial extends Material {
 
 class FlatShadedMaterial extends Material {
     static fragmentShaderSource = `
-        uniform highp vec4 uColor;
-        uniform highp sampler2D uColorTexture;
+        precision highp float;
 
-        varying highp vec2 vTextureCoord;
+        uniform vec4 uColor;
+        uniform sampler2D uColorTexture;
+        varying vec2 vTextureCoord;
 
         void main() {
             gl_FragColor = uColor;
@@ -911,7 +1095,7 @@ class Light extends Object3d {
         this.gl.bindTexture(this.gl.TEXTURE_2D, this._colorMap);
 
         // Configure our depth map settings...
-        this.gl.texImage2D(this.gl.TEXTURE_2D, 0, this.gl.RGBA, Light.ShadowMapWidth, Light.ShadowMapHeight, 0, this.gl.RGBA, this.gl.UNSIGNED_BYTE, null);
+        this.gl.texImage2D(this.gl.TEXTURE_2D, 0, this.gl.RGBA, 1024, 1024, 0, this.gl.RGBA, this.gl.UNSIGNED_BYTE, null);
         this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MIN_FILTER, this.gl.NEAREST);
         this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MAG_FILTER, this.gl.NEAREST);
         this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_WRAP_S, this.gl.CLAMP_TO_EDGE);
@@ -924,7 +1108,7 @@ class Light extends Object3d {
         this.gl.bindTexture(this.gl.TEXTURE_2D, this._shadowMap);
 
         // Configure our depth map settings...
-        this.gl.texImage2D(this.gl.TEXTURE_2D, 0, this.gl.DEPTH_COMPONENT16 , Light.ShadowMapWidth, Light.ShadowMapHeight, 0, this.gl.DEPTH_COMPONENT , this.gl.UNSIGNED_SHORT, null);
+        this.gl.texImage2D(this.gl.TEXTURE_2D, 0, this.gl.DEPTH_COMPONENT16 , 1024, 1024, 0, this.gl.DEPTH_COMPONENT , this.gl.UNSIGNED_SHORT, null);
         this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MIN_FILTER, this.gl.NEAREST);
         this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MAG_FILTER, this.gl.NEAREST);
         this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_WRAP_S, this.gl.CLAMP_TO_EDGE);
@@ -934,13 +1118,16 @@ class Light extends Object3d {
 
         // bind this texture to be used as our framebuffer if we are rendering to the shadowmap instead of the canvas.
         this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, this._shadowMapFramebuffer);
-        this.gl.framebufferTexture2D(this.gl.FRAMEBUFFER, this.gl.DEPTH_ATTACHMENT, this.gl.TEXTURE_2D, this._colorMap, 0); 
-        this.gl.framebufferTexture2D(this.gl.FRAMEBUFFER, this.gl.COLOR_ATTACHMENT0, this.gl.TEXTURE_2D, this._shadowMap, 0);
+        this.gl.framebufferTexture2D(this.gl.FRAMEBUFFER, this.gl.DEPTH_ATTACHMENT, this.gl.TEXTURE_2D, this._shadowMap, 0);
+        this.gl.framebufferTexture2D(this.gl.FRAMEBUFFER, this.gl.COLOR_ATTACHMENT0, this.gl.TEXTURE_2D, this._colorMap, 0);
 
         const status = this.gl.checkFramebufferStatus(this.gl.FRAMEBUFFER);
         if (status !== this.gl.FRAMEBUFFER_COMPLETE) {
             console.log("The created frame buffer is invalid: " + status.toString());
         }
+
+        // switch back to default backbuffer.
+        this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, null);
     }
 
     render() {
