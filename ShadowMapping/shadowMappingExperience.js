@@ -18,39 +18,17 @@ class Experience {
      *
      * adapted from https://learnopengl.com/Advanced-Lighting/Shadows/Shadow-Mapping
      */
-    renderShadowMap(light) {
-
-        var ext = this.gl.getExtension('WEBGL_depth_texture');
-        if (ext === undefined){
-            // TODO: perhaps move this check to the rest of the webgl capabilities checks?
-            console.error("WEBGL_depth_texture is not available on this device! skipping shadow mapping...");
-        }
-
-        // TODO: this should be created once at light creation...
-        const depthMap = this.gl.createTexture();
-
+    renderShadowMap(light) {        
         this.gl.clearDepth(1.0);
         this.gl.enable(this.gl.DEPTH_TEST);
         this.gl.depthFunc(this.gl.LEQUAL);
         this.gl.cullFace(this.gl.FRONT);
 
+        this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, (this._showShadowMap ? null : light.getShadowMapFramebuffer()));
+
+
         // clear the depth and color buffers.
         this.gl.clear(this.gl.COLOR_BUFFER_BIT | this.gl.DEPTH_BUFFER_BIT);
-
-        // set a texture slot to use this depthmap texture.
-        this.gl.bindTexture(this.gl.TEXTURE_2D, depthMap);
-
-        // Configure our depth map settings...
-        this.gl.texImage2D(this.gl.TEXTURE_2D, 0, this.gl.DEPTH_COMPONENT24, Light.ShadowMapWidth, Light.ShadowMapHeight, 0, this.gl.DEPTH_COMPONENT24, this.gl.FLOAT, depthMap);
-        this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MIN_FILTER, this.gl.NEAREST);
-        this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MAG_FILTER, this.gl.NEAREST);
-        this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_WRAP_S, this.gl.REPEAT);
-        this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_WRAP_T, this.gl.REPEAT);
-
-        // bind this texture to be used as our framebuffer if we are rendering to the shadowmap instead of the canvas.
-        if (!this._showShadowMap){
-            //this.gl.framebufferTexture2D(this.gl.FRAMEBUFFER, this.gl.DEPTH_ATTACHMENT, this.gl.TEXTURE_2D, depthMap, 0);
-        }
 
         // In order to create our shadowMap, we want to pretend that the light is a "camera" into the scene, and render what it "sees".
         // However, we only care about how far all the fragments in "view" are.
@@ -93,18 +71,24 @@ class Experience {
     }
 
     render() {
-
+        //this.gl.viewport(0, 0, this.gl.canvas.width, this.gl.canvas.clientHeight);
         if (this.lights.length > 0){
             this.renderShadowMap(this.lights[0]);
             if (this._showShadowMap){
                 return;
             }
         }
+
         this.gl.clearColor(this.clearColor[0], this.clearColor[1], this.clearColor[2], this.clearColor[3]);
         this.gl.clearDepth(1.0);
         this.gl.enable(this.gl.DEPTH_TEST);
         this.gl.depthFunc(this.gl.LEQUAL);
-        //this.gl.cullFace(this.gl.BACK);
+
+        // set so that we render to the canvas.
+        this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, null);
+
+        // set default backface culling.
+        this.gl.cullFace(this.gl.BACK);
 
         // clear the depth and color buffers.
         this.gl.clear(this.gl.COLOR_BUFFER_BIT | this.gl.DEPTH_BUFFER_BIT);
@@ -165,6 +149,14 @@ class Experience {
                 );
             }
 
+            if (programInfo.uniformLocations.shadowMapSampler && this.lights.length > 0){
+                // TODO: for now, we are defaulting to using texture slot 0 to store the shadowmap, but this will not scale to support a variable number of lights and material textures.
+                // Think of a way to dynamically choose which texture slot to bind as we encounter more textures to bind.
+                gl.activeTexture(gl.TEXTURE0);
+                gl.bindTexture(gl.TEXTURE_2D, this.lights[0].getShadowMap());
+                gl.uniform1i(programInfo.uniformLocations.shadowMapSampler, 0);
+            }
+
             const attributeBuffers = mesh.render(programInfo);
         });
     }
@@ -195,7 +187,7 @@ class ShadowMappingExperience extends Experience {
         ground.setPosition(0, 0, 0);
         ground.setScaling(5, 5, 5);
 
-        const light = new DirectionalLight();
+        const light = new DirectionalLight(glContext);
         const lightLookat = mat4.create();
         const lightPos = vec3.fromValues(-5, 10, 5);
         const lightRot = quat.create();
@@ -382,8 +374,11 @@ class Mesh extends Object3d {
     constructor(glContext) {
         super(glContext);
         this.vertices = [];
+        this.normals = [];
+        this.uvs = [];
         this.indices = [];
         this.triangleDrawMode = glContext.TRIANGLES;
+        this.vertexBuffers = {};
         this.material = new PhongShaderMaterial(glContext,
                                                 [0.1, 0.1, 0.1, 1.0],
                                                 [0.5, 0.5, 0.5, 1.0],
@@ -391,16 +386,7 @@ class Mesh extends Object3d {
                                                 0.3);
     }
 
-    render(programInfo) {
-        if (programInfo.uniformLocations.modelMatrix) {
-            this.gl.uniformMatrix4fv(
-                programInfo.uniformLocations.modelMatrix,
-                false,
-                this.getTransform()
-            );
-        }
-
-        // TODO: we only need to create vertex buffers once at startup, and when mesh geometry changes. move to an init function.
+    _init(){
         // vertex positions
         const positionBuffer = this.gl.createBuffer();
         this.gl.bindBuffer(this.gl.ARRAY_BUFFER, positionBuffer);
@@ -421,6 +407,28 @@ class Mesh extends Object3d {
             new Float32Array(this.normals),
             this.gl.STATIC_DRAW);
 
+        // vertex UVs
+        const uvBuffer = this.gl.createBuffer();
+        this.gl.bindBuffer(this.gl.ARRAY_BUFFER, uvBuffer);
+        this.gl.bufferData(this.gl.ARRAY_BUFFER,
+                new Float32Array(this.uvs),
+                this.gl.STATIC_DRAW);
+
+        this.vertexBuffers["position"] = positionBuffer;
+        this.vertexBuffers["normal"] = normalBuffer;
+        this.vertexBuffers["uv"] = uvBuffer; 
+        this.vertexBuffers["index"] = indexBuffer;
+    }
+
+    render(programInfo) {
+        if (programInfo.uniformLocations.modelMatrix) {
+            this.gl.uniformMatrix4fv(
+                programInfo.uniformLocations.modelMatrix,
+                false,
+                this.getTransform()
+            );
+        }
+
         // Vertex attribute buffer binding
         // Position Buffer
         if (programInfo.attribLocations.vertexPosition !== undefined){
@@ -430,7 +438,7 @@ class Mesh extends Object3d {
             const stride = 0;
             const offset = 0;
 
-            this.gl.bindBuffer(this.gl.ARRAY_BUFFER, positionBuffer);
+            this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.vertexBuffers["position"]);
 
             this.gl.vertexAttribPointer(
                 programInfo.attribLocations.vertexPosition,
@@ -452,7 +460,7 @@ class Mesh extends Object3d {
             const normalize = false;
             const stride = 0;
             const offset = 0;
-            this.gl.bindBuffer(this.gl.ARRAY_BUFFER, normalBuffer);
+            this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.vertexBuffers["normal"]);
             this.gl.vertexAttribPointer(
                 programInfo.attribLocations.vertexNormal,
                 numComponents,
@@ -466,8 +474,29 @@ class Mesh extends Object3d {
             );
         }
 
+        // UV Buffer
+        if (programInfo.attribLocations.vertexUV !== undefined) {
+            const numComponents = 2
+            const type = this.gl.FLOAT;
+            const normalize = false;
+            const stride = 0;
+            const offset = 0;
+            this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.vertexBuffers["uv"]);
+            this.gl.vertexAttribPointer(
+                programInfo.attribLocations.vertexUV,
+                numComponents,
+                type,
+                normalize,
+                stride,
+                offset
+            );
+            this.gl.enableVertexAttribArray(
+                programInfo.attribLocations.vertexUV
+            );
+        }
+
         // Indices Buffer
-        this.gl.bindBuffer(this.gl.ELEMENT_ARRAY_BUFFER, indexBuffer);
+        this.gl.bindBuffer(this.gl.ELEMENT_ARRAY_BUFFER, this.vertexBuffers["index"]);
 
         this.gl.drawElements(this.triangleDrawMode, this.indices.length, this.gl.UNSIGNED_SHORT, 0);
     }
@@ -564,6 +593,8 @@ class BoxMesh extends Mesh {
                 20, 21, 22,     20, 22, 23,   // left
               ];
         this.triangleDrawMode = glContext.TRIANGLES;
+
+        this._init();
     }
 }
 
@@ -582,9 +613,16 @@ class PlaneMesh extends Mesh {
             0.0,  0.0,  1.0,
             0.0,  0.0,  1.0,
         ]
+        this.uvs = [
+            1.0, 1.0,
+            1.0, 0.0,
+            0.0, 1.0,
+            0.0, 0.0
+        ]
         this.indices = [0, 1, 2,  0, 2, 1,
                         2, 1, 3,  2, 3, 1];
         this.triangleDrawMode = glContext.TRIANGLES;
+        this._init();
     }
 }
 
@@ -609,6 +647,7 @@ class GroundPlaneMesh extends Mesh {
        this.indices = [0, 1, 2,   0, 2, 1,
                        2, 1, 3,   2, 3, 1];
        this.triangleDrawMode = glContext.TRIANGLES;
+       this._init();
     }
 }
 
@@ -693,6 +732,7 @@ class PhongShaderMaterial extends Material {
         uniform highp float uGlossiness;
         uniform highp mat4 uLightMatrix;
         uniform highp float uLightBrightness;
+        uniform highp sampler2D uShadowMapSampler;
 
         varying highp vec3 vVertexNormal;
         varying highp vec3 vVertexPosition;
@@ -759,7 +799,8 @@ class PhongShaderMaterial extends Material {
                 diffuseColor:  this.gl.getUniformLocation(shaderProgram, 'uDiffuseColor'),
                 specularColor:  this.gl.getUniformLocation(shaderProgram, 'uSpecularColor'),
                 lightMatrix:  this.gl.getUniformLocation(shaderProgram, 'uLightMatrix'),
-                lightBrightness:  this.gl.getUniformLocation(shaderProgram, 'uLightBrightness')
+                lightBrightness:  this.gl.getUniformLocation(shaderProgram, 'uLightBrightness'),
+                shadowMapSampler: this.gl.getUniformLocation(shaderProgram, 'uShadowMapSampler'),
             },
         };
 
@@ -788,6 +829,9 @@ class PhongShaderMaterial extends Material {
 class FlatShadedMaterial extends Material {
     static fragmentShaderSource = `
         uniform highp vec4 uColor;
+        uniform highp sampler2D uColorTexture;
+
+        varying highp vec2 vTextureCoord;
 
         void main() {
             gl_FragColor = uColor;
@@ -819,6 +863,7 @@ class FlatShadedMaterial extends Material {
                 modelMatrix:  this.gl.getUniformLocation(shaderProgram, 'uModelMatrix'),
                 viewMatrix:  this.gl.getUniformLocation(shaderProgram, 'uViewMatrix'),
                 color:  this.gl.getUniformLocation(shaderProgram, 'uColor'),
+                colorTexture: this.gl.getUniformLocation(shaderProgram, 'uColorTexture'),
             },
         };
 
@@ -853,6 +898,49 @@ class Light extends Object3d {
         super(glContext);
         this._brightness = 1; // brightness is measured in phong shader units, lumen.
         this._angle = 45; // for now, emulate a spot light
+        this._shadowMap = null;
+        this._shadowMapFramebuffer;
+
+        this._init();
+    }
+
+    _init(){
+        // initialize shadow map buffers.
+        this._colorMap = this.gl.createTexture();
+        // set a texture slot to use this depthmap texture.
+        this.gl.bindTexture(this.gl.TEXTURE_2D, this._colorMap);
+
+        // Configure our depth map settings...
+        this.gl.texImage2D(this.gl.TEXTURE_2D, 0, this.gl.RGBA, Light.ShadowMapWidth, Light.ShadowMapHeight, 0, this.gl.RGBA, this.gl.UNSIGNED_BYTE, null);
+        this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MIN_FILTER, this.gl.NEAREST);
+        this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MAG_FILTER, this.gl.NEAREST);
+        this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_WRAP_S, this.gl.CLAMP_TO_EDGE);
+        this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_WRAP_T, this.gl.CLAMP_TO_EDGE);
+
+        // TODO: this should be created once at light creation...
+        this._shadowMap = this.gl.createTexture();
+
+        // set a texture slot to use this depthmap texture.
+        this.gl.bindTexture(this.gl.TEXTURE_2D, this._shadowMap);
+
+        // Configure our depth map settings...
+        this.gl.texImage2D(this.gl.TEXTURE_2D, 0, this.gl.DEPTH_COMPONENT16 , Light.ShadowMapWidth, Light.ShadowMapHeight, 0, this.gl.DEPTH_COMPONENT , this.gl.UNSIGNED_SHORT, null);
+        this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MIN_FILTER, this.gl.NEAREST);
+        this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MAG_FILTER, this.gl.NEAREST);
+        this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_WRAP_S, this.gl.CLAMP_TO_EDGE);
+        this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_WRAP_T, this.gl.CLAMP_TO_EDGE);
+
+        this._shadowMapFramebuffer = this.gl.createFramebuffer();
+
+        // bind this texture to be used as our framebuffer if we are rendering to the shadowmap instead of the canvas.
+        this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, this._shadowMapFramebuffer);
+        this.gl.framebufferTexture2D(this.gl.FRAMEBUFFER, this.gl.DEPTH_ATTACHMENT, this.gl.TEXTURE_2D, this._colorMap, 0); 
+        this.gl.framebufferTexture2D(this.gl.FRAMEBUFFER, this.gl.COLOR_ATTACHMENT0, this.gl.TEXTURE_2D, this._shadowMap, 0);
+
+        const status = this.gl.checkFramebufferStatus(this.gl.FRAMEBUFFER);
+        if (status !== this.gl.FRAMEBUFFER_COMPLETE) {
+            console.log("The created frame buffer is invalid: " + status.toString());
+        }
     }
 
     render() {
@@ -875,12 +963,24 @@ class Light extends Object3d {
         return this._brightness;
     }
 
+    setShadowMap(shadowMap) {
+        this._shadowMap = shadowMap;
+    }
+
+    getShadowMap() {
+        return this._shadowMap;
+    }
+
+    getShadowMapFramebuffer() {
+        return this._shadowMapFramebuffer;
+    }
+
     static ShadowMapWidth = 1024
     static ShadowMapHeight = 1024
 }
 
 class DirectionalLight extends Light {
-    constructor(glContext, castShadow, direction){
+    constructor(glContext, castShadow){
         super(glContext, castShadow);
     }
 
