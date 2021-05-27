@@ -21,33 +21,37 @@ class Experience {
      * adapted from https://learnopengl.com/Advanced-Lighting/Shadows/Shadow-Mapping
      */
     renderShadowMap(light) {
-        this.gl.clearDepth(1.0);
         this.gl.enable(this.gl.DEPTH_TEST);
+        this.gl.enable(this.gl.CULL_FACE);
         this.gl.depthFunc(this.gl.LEQUAL);
         this.gl.cullFace(this.gl.BACK);
 
+        console.log(this.gl.getParameter(this.gl.DEPTH_WRITEMASK));
+
         this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, light.getShadowMapFramebuffer());
+        this.gl.colorMask(true, true, true, true);
+        this.gl.viewport(0, 0, Light.ShadowMapWidth, Light.ShadowMapHeight);
+
 
         // clear the depth and color buffers.
-        this.gl.clear(this.gl.COLOR_BUFFER_BIT | this.gl.DEPTH_BUFFER_BIT);
+        this.gl.clearDepth(1.0);
+        this.gl.clear(this.gl.DEPTH_BUFFER_BIT);
 
         // In order to create our shadowMap, we want to pretend that the light is a "camera" into the scene, and render what it "sees".
         // However, we only care about how far all the fragments in "view" are.
         const projectionMatrix = mat4.create();
-        const aspect = this.gl.canvas.clientWidth / this.gl.canvas.clientHeight;
+        const aspect = 1;
         const fieldOfView = light.getAngle() * Math.PI / 180;   // in radians
         mat4.perspective(projectionMatrix,
             fieldOfView,
             aspect,
-            this.camera.nearClippingPlane,
-            this.camera.farClippingPlane);
+            0,
+            light.getMaxFalloffDistance());
 
         // TODO: Make this a static reference for our light class?
         const depthTestMaterial = new DepthTestMaterial(this.gl);
+        depthTestMaterial.setMaxZ(light.getMaxFalloffDistance());
         const programInfo = depthTestMaterial.loadProgram();
-
-        let lightPos = light.getPosition();
-        let lightRot = light.getRotation();
 
         const viewMatrix = mat4.create();
             mat4.invert(viewMatrix,
@@ -74,15 +78,16 @@ class Experience {
     }
 
     render() {
-        //this.gl.viewport(0, 0, this.gl.canvas.width, this.gl.canvas.clientHeight);
-        if (this.lights.length > 0){
+        if (this.lights.length > 0) {
             this.renderShadowMap(this.lights[0]);
         }
-
         this.gl.clearColor(this.clearColor[0], this.clearColor[1], this.clearColor[2], this.clearColor[3]);
         this.gl.clearDepth(1.0);
         this.gl.enable(this.gl.DEPTH_TEST);
+        this.gl.enable(this.gl.CULL_FACE);
         this.gl.depthFunc(this.gl.LEQUAL);
+        this.gl.viewport(0, 0, this.gl.canvas.width, this.gl.canvas.height);
+        this.gl.colorMask(true, true, true, true);
 
         // set so that we render to the canvas.
         this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, null);
@@ -179,13 +184,13 @@ class ShadowMappingExperience extends Experience {
 
         const box = new BoxMesh(glContext);
         this.meshes.push(box);
-        box.setPosition(0, 2, 0);
+        box.setPosition(0, 3, 0);
         box.setRotationDegrees(0, 0, 0);
         box.material = new PhongShaderMaterial(glContext,
             [0.1, 0.0, 0.0, 1.0],
             [0.5, 0.0, 0.0, 1.0],
             [0.5, 0.5, 0.5, 1.0],
-            20.0);
+            3.0);
 
         const ground = new GroundPlaneMesh(glContext);
         this.meshes.push(ground);
@@ -211,8 +216,8 @@ class ShadowMappingExperience extends Experience {
         let cameraMin = -3;
         let cameraMax = 3;
         let cameraSpeed = 1;
-        let lightMin = -5;
-        let lightMax = 5;
+        let lightMin = 0;
+        let lightMax = 10;
         let lightSpeed = 10;
         let cameraIncreasing = false;
         let lightIncreasing = false;
@@ -439,6 +444,7 @@ class Mesh extends Object3d {
         this.normals = [];
         this.uvs = [];
         this.indices = [];
+        this.colors = [];
         this.triangleDrawMode = glContext.TRIANGLES;
         this.vertexBuffers = {};
         this.material = new PhongShaderMaterial(glContext,
@@ -476,10 +482,18 @@ class Mesh extends Object3d {
                 new Float32Array(this.uvs),
                 this.gl.STATIC_DRAW);
 
+        // vertex colors
+        const colorBuffer = this.gl.createBuffer();
+        this.gl.bindBuffer(this.gl.ARRAY_BUFFER, colorBuffer);
+        this.gl.bufferData(this.gl.ARRAY_BUFFER,
+                new Float32Array(this.colors),
+                this.gl.STATIC_DRAW);
+
         this.vertexBuffers["position"] = positionBuffer;
         this.vertexBuffers["normal"] = normalBuffer;
         this.vertexBuffers["uv"] = uvBuffer;
         this.vertexBuffers["index"] = indexBuffer;
+        this.vertexBuffers["color"] = colorBuffer;
     }
 
     render(programInfo) {
@@ -554,6 +568,27 @@ class Mesh extends Object3d {
             );
             this.gl.enableVertexAttribArray(
                 programInfo.attribLocations.vertexUV
+            );
+        }
+
+        // Color Buffer
+        if (programInfo.attribLocations.vertexColor !== undefined) {
+            const numComponents = 4;
+            const type = this.gl.FLOAT;
+            const normalize = false;
+            const stride = 0;
+            const offset = 0;
+            this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.vertexBuffers["color"]);
+            this.gl.vertexAttribPointer(
+                programInfo.attribLocations.vertexColor,
+                numComponents,
+                type,
+                normalize,
+                stride,
+                offset
+            );
+            this.gl.enableVertexAttribArray(
+                programInfo.attribLocations.vertexColor
             );
         }
 
@@ -681,6 +716,12 @@ class PlaneMesh extends Mesh {
             0.0, 1.0,
             0.0, 0.0
         ]
+        this.colors = [
+            1.0, 0.0, 0.0, 1.0,
+            0.0, 1.0, 0.0, 1.0,
+            0.0, 0.0, 1.0, 1.0,
+            1.0, 1.0, 1.0, 1.0,
+        ]
         this.indices = [0, 1, 2,  0, 2, 1,
                         2, 1, 3,  2, 3, 1];
         this.triangleDrawMode = glContext.TRIANGLES;
@@ -784,6 +825,27 @@ class ScreenQuadMesh extends PlaneMesh {
             );
         }
 
+        // Color Buffer
+        if (programInfo.attribLocations.vertexColor !== undefined) {
+            const numComponents = 4;
+            const type = this.gl.FLOAT;
+            const normalize = false;
+            const stride = 0;
+            const offset = 0;
+            this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.vertexBuffers["color"]);
+            this.gl.vertexAttribPointer(
+                programInfo.attribLocations.vertexColor,
+                numComponents,
+                type,
+                normalize,
+                stride,
+                offset
+            );
+            this.gl.enableVertexAttribArray(
+                programInfo.attribLocations.vertexColor
+            );
+        }
+
         // Indices Buffer
         this.gl.bindBuffer(this.gl.ELEMENT_ARRAY_BUFFER, this.vertexBuffers["index"]);
 
@@ -825,26 +887,36 @@ class Material {
     static vertexShaderSource = `
         precision highp float;
 
-        attribute vec3 aVertexPosition;
-        attribute vec3 aVertexNormal;
+        attribute vec4 aVertexPosition;
+        attribute vec4 aVertexNormal;
         attribute vec2 aVertexUv;
 
         uniform mat4 uViewMatrix;
         uniform mat4 uModelMatrix;
         uniform mat4 uProjectionMatrix;
 
-        varying vec3 vVertexNormal;
-        varying vec3 vVertexPosition;
+        varying vec4 vVertexNormal;
         varying vec2 vVertexUv;
 
-        varying vec4 vWorldPosition;
+        varying vec4 vViewPosition;     // where is the view in worldspace?
+
+        varying vec4 vModelPosition;    // where is the vertex in the model's space?
+        varying vec4 vWorldPosition;    // where is this vert in worldspace?
+        varying vec4 vWorldNormal;      // where is this normal pointing in worldspace?
+        varying vec4 vCameraPosition;   // where is this vert in cameraspace?
+        varying vec4 vClipPosition;     // where is this vert in clipspace?
 
         void main() {
-            vVertexPosition = aVertexPosition;
+            vModelPosition = vec4(aVertexPosition.xyz, 1.0);
             vVertexNormal = aVertexNormal;
             vVertexUv = aVertexUv;
-            vWorldPosition = uProjectionMatrix * uViewMatrix * uModelMatrix * vec4(aVertexPosition, 1.0);
-            gl_Position = vWorldPosition;
+            vWorldPosition = uModelMatrix * vModelPosition;
+            vWorldNormal =  vec4(mat3(uModelMatrix) * vVertexNormal.xyz, 0.0);
+            vCameraPosition = uViewMatrix * vWorldPosition;
+            vClipPosition = uProjectionMatrix * vCameraPosition;
+            vViewPosition = uViewMatrix[3]; // Remember, we are column major, so column values are Right, Up, Forward, Translation
+
+            gl_Position = vClipPosition;
         }
     `;
 
@@ -860,19 +932,33 @@ class DepthTestMaterial extends Material {
         if (!DepthTestMaterial.shaderProgram) {
             DepthTestMaterial.shaderProgram = GlHelper.createShaderProgram(glContext, Material.vertexShaderSource, DepthTestMaterial.fragmentShaderSource);
         }
+        this._maxZ = 255.0;
     }
 
     static fragmentShaderSource = `
-        precision mediump float;
+        precision highp float;
 
-        varying vec4 vWorldPosition;
+        varying vec4 vViewPosition;     // where is the view in worldspace?
+
+        varying vec4 vModelPosition;    // where is the vertex in the model's space?
+        varying vec4 vWorldPosition;    // where is this vert in worldspace?
+        varying vec4 vCameraPosition;   // where is this vert in cameraspace?
+        varying vec4 vClipPosition;     // where is this vert in clipspace?
+
+        uniform float uMaxZ;
 
         void main() {
-            gl_FragColor = vec4(vWorldPosition.z, 0.0, 0.0, 1.0);
+            vec3 dist = vWorldPosition.xyz;
+            //float normDist = dist;
+            gl_FragColor = vec4( dist.x, dist.y, dist.z, 1.0);
         }
     `
 
     static shaderProgram = null;
+
+    setMaxZ (maxZ){
+        this._maxZ = maxZ;
+    }
 
     loadProgram() {
         const shaderProgram = DepthTestMaterial.shaderProgram;
@@ -887,9 +973,15 @@ class DepthTestMaterial extends Material {
             uniformLocations: {
                 projectionMatrix: this.gl.getUniformLocation(shaderProgram, 'uProjectionMatrix'),
                 modelMatrix:  this.gl.getUniformLocation(shaderProgram, 'uModelMatrix'),
-                viewMatrix:  this.gl.getUniformLocation(shaderProgram, 'uViewMatrix')
+                viewMatrix:  this.gl.getUniformLocation(shaderProgram, 'uViewMatrix'),
+                maxZ: this.gl.getUniformLocation(shaderProgram, 'uMaxZ'),
             },
         };
+
+        if (programInfo.uniformLocations.maxZ && this._maxZ){
+            // setup texture sampler to be projected onto the quad
+            this.gl.uniform1f(programInfo.uniformLocations.maxZ, this._maxZ);
+        }
 
         return programInfo;
     }
@@ -898,6 +990,8 @@ class DepthTestMaterial extends Material {
 class ScreenQuadMaterial extends Material {
     constructor(glContext, texture){
         super(glContext);
+
+        this._texture = texture;
 
         if (!ScreenQuadMaterial.shaderProgram) {
             ScreenQuadMaterial.shaderProgram = GlHelper.createShaderProgram(glContext, ScreenQuadMaterial.vertexShaderSource, ScreenQuadMaterial.fragmentShaderSource);
@@ -908,18 +1002,21 @@ class ScreenQuadMaterial extends Material {
         precision highp float;
 
         attribute vec2 aVertexPosition;
+        attribute vec4 aVertexColor;
 
         uniform mat3 uTransform2d;
 
         varying vec2 vVertexUv;
+        varying vec4 vColor;
 
-        void main(){
+        void main() {
             vec2 vertPos = aVertexPosition - vec2(0.5, 0.5); // move from 0->1 to -0.5-> 0.5;
             vertPos *= 2.0; // -0.5->0.5 to -1->1;
             gl_Position = vec4(uTransform2d * vec3(vertPos, 0.0), 1.0);
 
             // Use vertex position as our texture coordinates, since this is intended for a unit quad.
             vVertexUv = aVertexPosition;
+            vColor = aVertexColor;
         }
     `;
 
@@ -929,9 +1026,11 @@ class ScreenQuadMaterial extends Material {
         uniform sampler2D uTexture;
 
         varying vec2 vVertexUv;
+        varying vec4 vColor;
 
         void main() {
-            gl_FragColor = texture2D(uTexture, vVertexUv);
+            vec3 texPixel = texture2D(uTexture, vVertexUv).xyz;
+            gl_FragColor = vec4(texPixel.x > 0.99, texPixel.y > 0.99, texPixel.z > 0.99, 1.0);
         }
     `;
 
@@ -943,13 +1042,21 @@ class ScreenQuadMaterial extends Material {
         const programInfo = {
             program: shaderProgram,
             attribLocations: {
-                vertexPosition: this.gl.getAttribLocation(shaderProgram, 'aVertexPosition')
+                vertexPosition: this.gl.getAttribLocation(shaderProgram, 'aVertexPosition'),
+                vertexColor: this.gl.getAttribLocation(shaderProgram, 'aVertexColor')
             },
             uniformLocations: {
                 transform2d:  this.gl.getUniformLocation(shaderProgram, 'uTransform2d'),
                 texture:  this.gl.getUniformLocation(shaderProgram, 'uTexture'),
             },
         };
+
+        if (programInfo.uniformLocations.texture && this._texture){
+            // setup texture sampler to be projected onto the quad
+            this.gl.activeTexture(this.gl.TEXTURE0);
+            this.gl.bindTexture(this.gl.TEXTURE_2D, this._texture);
+            this.gl.uniform1i(programInfo.uniformLocations.texture, 0);
+        }
 
         return programInfo;
     }
@@ -974,30 +1081,36 @@ class PhongShaderMaterial extends Material {
         uniform float uLightBrightness;
         uniform sampler2D uShadowMapSampler;
 
-        varying vec3 vVertexNormal;
-        varying vec3 vVertexPosition;
 
-        vec3 phongBrdf(highp vec3 vR, highp vec3 vV, highp vec3 diffuseColor, highp vec3 specularColor, highp float glossiness) {
+        varying vec4 vViewPosition;     // where is the view in worldspace?
+
+        varying vec4 vModelPosition;    // where is the vertex in the model's space?
+        varying vec4 vWorldPosition;    // where is this vert in worldspace?
+        varying vec4 vWorldNormal;      // where does this normal point in worldspace?
+        varying vec4 vCameraPosition;   // where is this vert in cameraspace?
+        varying vec4 vClipPosition;     // where is this vert in clipspace?
+
+        vec3 phongBrdf(vec3 vR, vec3 vV, vec3 diffuseColor, vec3 specularColor, float glossiness) {
             vec3 color = diffuseColor;
             float specularPercentage = max(dot(vR, vV), 0.0);
-            //highp float specularIntensity = pow(specularPercentage, uGlossiness);
-            return color;// + specularColor * specularIntensity; //TODO: fix specular reflection...
+            float specularIntensity = 1.0;//pow(specularPercentage, max(uGlossiness, 0.0));
+            return color + (specularColor * specularIntensity); //TODO: fix specular reflection...
+        }
+
+        float lightIntensity(float cameraDistance){
+            return 40.0/pow(cameraDistance, 2.0);
         }
 
         void main() {
-            vec3  vLightPos = uLightMatrix[3].xyz;
-            vec3  vVertexWorldPos = (uModelMatrix * vec4(vVertexPosition, 1.0)).xyz;
-            vec3  vVertexWorldNormal = normalize((vec4(vVertexNormal, 1) * uModelMatrix).xyz);
-            vec3  vViewPos = uViewMatrix[3].xyz;
+            vec3  vLightPos = uLightMatrix[3].xyz; // remember, we are column major. Transform columns are Right, Up, Forward, Position
 
-            vec3  vN = normalize(vVertexNormal.xyz);
-            vec3  vL = normalize(vLightPos - vVertexWorldPos);
+            vec3  vN = normalize(vWorldNormal.xyz);
+            vec3  vL = normalize(vLightPos - vec3(vWorldPosition));
             vec3  vR = reflect(-vL, vN);
-            vec3  vV = normalize(vVertexWorldPos - vViewPos);
+            vec3  vV = normalize(-vCameraPosition.xyz);
 
             vec3 luminance = uAmbientColor.xyz;
-
-            float illuminance = dot(vL, vN);
+            float illuminance = dot(vL, vN) * lightIntensity(length(vCameraPosition.xyz));
             if (illuminance > 0.0){
                 vec3 brdfColor = phongBrdf(vR, vV, uDiffuseColor.rgb, uSpecularColor.rgb, uGlossiness);
                 luminance += brdfColor * illuminance * vec3(1.0, 1.0, 1.0); // for now, use white light.
@@ -1139,7 +1252,9 @@ class Light extends Object3d {
         super(glContext);
         this._brightness = 1; // brightness is measured in phong shader units, lumen.
         this._angle = 45; // for now, emulate a spot light
+        this._maxFalloffDistance = 50;
         this._shadowMap = null;
+        this._colorMap = null;
         this._shadowMapFramebuffer;
 
         this._init();
@@ -1152,11 +1267,11 @@ class Light extends Object3d {
         this.gl.bindTexture(this.gl.TEXTURE_2D, this._colorMap);
 
         // Configure our depth map settings...
-        this.gl.texImage2D(this.gl.TEXTURE_2D, 0, this.gl.RGBA, 1024, 1024, 0, this.gl.RGBA, this.gl.UNSIGNED_BYTE, null);
         this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MIN_FILTER, this.gl.NEAREST);
         this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MAG_FILTER, this.gl.NEAREST);
         this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_WRAP_S, this.gl.CLAMP_TO_EDGE);
         this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_WRAP_T, this.gl.CLAMP_TO_EDGE);
+        this.gl.texImage2D(this.gl.TEXTURE_2D, 0, this.gl.RGBA, Light.ShadowMapWidth, Light.ShadowMapHeight, 0, this.gl.RGBA, this.gl.UNSIGNED_BYTE, null);
 
         // TODO: this should be created once at light creation...
         this._shadowMap = this.gl.createTexture();
@@ -1165,11 +1280,12 @@ class Light extends Object3d {
         this.gl.bindTexture(this.gl.TEXTURE_2D, this._shadowMap);
 
         // Configure our depth map settings...
-        this.gl.texImage2D(this.gl.TEXTURE_2D, 0, this.gl.DEPTH_COMPONENT16 , 1024, 1024, 0, this.gl.DEPTH_COMPONENT , this.gl.UNSIGNED_SHORT, null);
         this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MIN_FILTER, this.gl.NEAREST);
         this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MAG_FILTER, this.gl.NEAREST);
         this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_WRAP_S, this.gl.CLAMP_TO_EDGE);
         this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_WRAP_T, this.gl.CLAMP_TO_EDGE);
+        this.gl.texImage2D(this.gl.TEXTURE_2D, 0, this.gl.DEPTH_COMPONENT16 , Light.ShadowMapWidth, Light.ShadowMapHeight, 0, this.gl.DEPTH_COMPONENT , this.gl.UNSIGNED_SHORT, null);
+
 
         this._shadowMapFramebuffer = this.gl.createFramebuffer();
 
@@ -1215,8 +1331,20 @@ class Light extends Object3d {
         return this._shadowMap;
     }
 
+    getColorMap() {
+        return this._colorMap;
+    }
+
     getShadowMapFramebuffer() {
         return this._shadowMapFramebuffer;
+    }
+
+    getMaxFalloffDistance() {
+        return this._maxFalloffDistance;
+    }
+
+    setMaxFalloffDistance(distance) {
+        this._maxFalloffDistance = distance;
     }
 
     static ShadowMapWidth = 1024

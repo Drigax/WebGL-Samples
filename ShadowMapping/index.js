@@ -65,7 +65,6 @@ function main() {
             renderNextFrame();
         }, Math.max(16.0 - (diff/1000.0), 0.0)); //Limit to ~60 FPS
     }
-
     renderNextFrame();
 }
 
